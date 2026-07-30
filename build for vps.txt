@@ -1,0 +1,6 @@
+sudo docker run --rm \
+  --user root \
+  -v "/mnt/hdd/Cod4/plugins:/plugins" \
+  -w /plugins/nektum_shield \
+  ghcr.io/obteo/yob-debian13-i386:latest \
+  sh -c "apt update && apt install -y build-essential gcc-multilib libc6-dev-i386 && make clean && make"
