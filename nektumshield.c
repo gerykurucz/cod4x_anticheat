@@ -1,11 +1,11 @@
 /*
  * ============================================================
- *  NEKTUM SHIELD - COD4X Anti-Cheat & Server Management Plugin
- *  Version: 2.8 Final
- *  Developer: Nobody
+ *  Nektum Shield - COD4X Plugin
+ *  Version: 3.2
+ *  Developer: XV9K (@sudoxv9k)
  * ============================================================
  */
-
+ 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,31 +13,29 @@
 #include <time.h>
 #include <stdarg.h>
 #include <ctype.h>
-#include "./pinc.h"
+#include "api/pinc.h"
+
+/* ========================= PLACE YOUR WEBHOOK URL HERE ========================= */
+#define WEBHOOK_URL "https://discord.com/api/webhooks/your_url"
 
 /* ========================= CONSTANTS ========================= */
 #define MAXP 64
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-
-#define WEBHOOK_URL "https://discord.com/api/webhooks/1521222250349727815/IBbRXnqCOIG67PGZwRgeJvwltDzfBFR0W1y6d7iw1yZYIHyDQbOYNvSK-AVOsk9GMJGa"
-
 #define BAN_DVAR "cl_ext_status"
 #define BAN_DVAR_VALUE 5281
 #define STAT_CHEATER_MARK 5981
 #define STAT_NEKTUM_ID 5982
-
 #define MOD_PISTOL_BULLET 1
 #define MOD_RIFLE_BULLET 2
 #define MOD_HEAD_SHOT 6
-
 #define MAX_DISCORD_QUEUE 16
 #define MAX_BANS 2048
-#define MAX_USERS 4096
+#define MAX_USERS 16000
 #define MAX_MUTES 256
 #define PERMA_BAN_MINUTES 5256000
-
+#define MACRO_KICK_REASON "Macro and Scroll Binds are not allowed on this server.\nPlease /reconnect and follow the server rules in the future."
 #define BANLIST_FILE "nektumshield_banlist.txt"
 #define USERS_FILE "nektumshield_users.txt"
 #define MUTES_FILE "nektumshield_mutes.txt"
@@ -53,14 +51,12 @@ typedef struct gclient_s gclient_t;
 
 /* ========================= GLOBAL STATE ========================= */
 static FILE *ac_log;
-static ftRequest_t* activeWebhookRequest = NULL;
+static ftRequest_t *activeWebhookRequest = NULL;
 static int webhookStartTime = 0;
-
 static char discordQueue[MAX_DISCORD_QUEUE][2200];
 static int discordQueueHead = 0;
 static int discordQueueTail = 0;
 static int discordQueueCount = 0;
-
 static uint64_t lastBlockedPID = 0;
 static time_t lastBlockedTime = 0;
 static char lastBlockedIP[64] = "";
@@ -78,12 +74,10 @@ typedef struct {
     vec3_t lastOrigin;
     int lastCmdTime;
     float lastMoveTime;
-
     int firingFrames;
     int lastPitch;
     int lastYaw;
     int recoilZeroYawFrames;
-
     int perfectShots;
     float lastPerfectShotTime;
     float lastPerfectKillTime;
@@ -92,40 +86,33 @@ typedef struct {
     float lastHipfireFlagTime;
     qboolean wasFiring;
     int lastCheckedClientCommand;
-
     float lastSnapAimTime;
     float lastNoRecoilTime;
     float lastHsRatioTime;
     float lastHsStreakTime;
     float lastBLStreakTime;
     int lastHsRatioCheckKills;
-
+    int lastHsRatioCheckHeadshots;
     int lastHitLoc;
     int sameHitStreak;
     float lastBodyLockTime;
-
     float pitchSum;
     float pitchSqSum;
     int recoilSamples;
     float lastMacroDetTime;
-
     qboolean pendingBan;
-    char pendingReason[64];
+    char pendingReason[256];
     int scheduledDropTime;
-    char dropReason[128];
-    
+    char dropReason[256];
     qboolean pendingNameCheck;
     int nameCheckStartTime;
     qboolean isMuted;
-
     float firstHsInStreakTime;
     float firstBlInStreakTime;
     float lastSnapTime;
     float firstSameHitTime;
-
     int movingHeadshotCount;
     float lastMovingHsTime;
-
     int logicClickCount;
     int logicWindowStart;
     float logicStrikes;
@@ -136,26 +123,36 @@ typedef struct {
     int consistencyMatchCount;
     int lastConsistencyGap;
     int lastConsistencyTime;
-
     int silentAimCount;
     float lastSilentAimTime;
     int adsZeroMoveFrames;
-
     int noSpreadHitCount;
     float lastNoSpreadHitTime;
     vec3_t lastHitPositions[5];
     int hitPosIndex;
-
     int lastKillTime;
     vec3_t lastKillVictimOrigin;
     int rapidSwitchKills;
-
+    vec3_t lastKillViewAngles;
     vec3_t lastShotAngles;
     vec3_t lastShotOrigin;
     float lastShotTime;
     qboolean hasShotData;
     qboolean isADS;
     qboolean lastShotADS;
+    
+    // --- ESP / WALLHACK SUSPECT VARIABLES ---
+    int espScore;
+    int espBlindTrackFrames;
+    int espPreAimFrames;
+    int espSixthSenseSnaps;
+    int espWallbangKills;
+    float lastEspWarningTime;
+    qboolean isSuspect;
+    float lastLargeSnapTime;
+    vec3_t largeSnapForward;
+    float lastSnapKillTime;
+    float enemyLastSeenTime[MAXP]; 
 } acData_t;
 
 static acData_t pData[MAXP];
@@ -170,6 +167,7 @@ typedef struct {
     char admin[64];
     time_t banTime;
 } nsBan_t;
+
 static nsBan_t g_banlist[MAX_BANS];
 static int g_numBans = 0;
 
@@ -180,6 +178,7 @@ typedef struct {
     char subnet24[20];
     int nektumID;
 } nsUser_t;
+
 static nsUser_t g_users[MAX_USERS];
 static int g_numUsers = 0;
 static int g_nextNektumID = 10000;
@@ -192,6 +191,7 @@ typedef struct {
     char reason[128];
     time_t muteTime;
 } nsMute_t;
+
 static nsMute_t g_mutedPlayers[MAX_MUTES];
 static int g_numMutes = 0;
 
@@ -215,18 +215,15 @@ static CONVAR_T *cv_alttab_move_dist;
 static CONVAR_T *cv_alttab_move_time;
 static CONVAR_T *cv_drop_delay_ms;
 static CONVAR_T *cv_name_check_delay;
-
 static CONVAR_T *cv_time_hs_streak;
 static CONVAR_T *cv_time_hs_window;
 static CONVAR_T *cv_time_bl_streak;
 static CONVAR_T *cv_time_bl_window;
 static CONVAR_T *cv_snap_kill_angle;
 static CONVAR_T *cv_snap_kill_window;
-
 static CONVAR_T *cv_moving_hs_dist;
 static CONVAR_T *cv_moving_hs_streak;
 static CONVAR_T *cv_moving_hs_window;
-
 static CONVAR_T *cv_macro_logic_clicks;
 static CONVAR_T *cv_macro_logic_window;
 static CONVAR_T *cv_macro_logic_strikes;
@@ -237,18 +234,22 @@ static CONVAR_T *cv_macro_rate_count;
 static CONVAR_T *cv_macro_rate_fast;
 static CONVAR_T *cv_macro_consistency_count;
 static CONVAR_T *cv_macro_consistency_gap;
-
 static CONVAR_T *cv_silent_aim_threshold_hipfire;
 static CONVAR_T *cv_silent_aim_threshold_ads;
 static CONVAR_T *cv_silent_aim_streak;
 static CONVAR_T *cv_ads_norecoil_frames;
-
 static CONVAR_T *cv_nospread_max_deviation;
 static CONVAR_T *cv_nospread_streak;
-
 static CONVAR_T *cv_target_switch_time;
 static CONVAR_T *cv_target_switch_angle;
 static CONVAR_T *cv_target_switch_streak;
+static CONVAR_T *cv_esp_warn_threshold;
+static CONVAR_T *cv_esp_min_dist;
+static CONVAR_T *cv_esp_max_dist;
+static CONVAR_T *cv_esp_occlusion_time;
+static CONVAR_T *cv_esp_occlusion_dist;
+static CONVAR_T *cv_esp_seen_dist;
+static CONVAR_T *cv_esp_score_decay;
 
 typedef struct {
     int score_ban;
@@ -270,18 +271,15 @@ typedef struct {
     float alttab_move_time;
     int drop_delay_ms;
     int name_check_delay;
-    
     int time_hs_streak;
     float time_hs_window;
     int time_bl_streak;
     float time_bl_window;
     float snap_kill_angle;
     float snap_kill_window;
-    
     float moving_hs_dist;
     int moving_hs_streak;
     float moving_hs_window;
-
     int macro_logic_clicks;
     int macro_logic_window;
     float macro_logic_strikes;
@@ -292,18 +290,22 @@ typedef struct {
     int macro_rate_fast;
     int macro_consistency_count;
     int macro_consistency_gap;
-    
     float silent_aim_threshold_hipfire;
     float silent_aim_threshold_ads;
     int silent_aim_streak;
     int ads_norecoil_frames;
-
     float nospread_max_deviation;
     int nospread_streak;
     float target_switch_time;
     float target_switch_angle;
     int target_switch_streak;
-
+    int esp_warn_threshold;
+    float esp_min_dist;
+    float esp_max_dist;
+    float esp_occlusion_time;
+    float esp_occlusion_dist;
+    float esp_seen_dist;
+    int esp_score_decay;
 } acCvars_t;
 
 static acCvars_t cvars;
@@ -331,7 +333,7 @@ static inline qboolean IsBot(client_t *cl) {
 void StripColorCodes(const char* in, char* out, int outSize) {
     int i = 0, j = 0;
     while (in[i] && j < outSize - 1) {
-        if (in[i] == '^' && in[i+1] != '\0') { i += 2; } 
+        if (in[i] == '^' && in[i+1] != '\0') { i += 2; }
         else { out[j++] = in[i++]; }
     }
     out[j] = '\0';
@@ -348,8 +350,7 @@ float ShortToAngle(int s) {
 }
 
 void GetSubnet24(const char* ip, char* out, int outSize) {
-    strncpy(out, ip, outSize - 1);
-    out[outSize - 1] = '\0';
+    snprintf(out, outSize, "%s", ip);
     char* lastDot = strrchr(out, '.');
     if (lastDot) *lastDot = '\0';
     else out[0] = '\0';
@@ -408,7 +409,7 @@ static inline qboolean IsSameIdentity(const nsUser_t* user, uint64_t pid, uint64
     if (clientStat >= 10000 && user->nektumID == clientStat) return qtrue;
     if (user->playerid != 0 && user->playerid == pid) return qtrue;
     if (user->steamid != 0 && user->steamid == sid) return qtrue;
-    if (user->subnet24[0] != '\0' && subnet[0] != '\0' && 
+    if (user->subnet24[0] != '\0' && subnet[0] != '\0' &&
         !IsCGNAT(subnet) && strcmp(user->subnet24, subnet) == 0) return qtrue;
     return qfalse;
 }
@@ -441,21 +442,16 @@ static inline void VectorNormalize(const vec3_t v, vec3_t out) {
 static inline void AngleVectors(const vec3_t angles, vec3_t forward) {
     float angle;
     float sp, sy, cp, cy;
-    
-    // Pitch
     angle = angles[0] * (M_PI / 180.0f);
     sp = sinf(angle);
     cp = cosf(angle);
-    
-    // Yaw
     angle = angles[1] * (M_PI / 180.0f);
     sy = sinf(angle);
     cy = cosf(angle);
-    
     if (forward) {
-        forward[0] = cp * cy;  // X (Standard Quake3)
-        forward[1] = cp * sy;  // Y (Standard Quake3)
-        forward[2] = -sp;      // Z
+        forward[0] = cp * cy;
+        forward[1] = cp * sy;
+        forward[2] = -sp;
     }
 }
 
@@ -486,7 +482,6 @@ void RemoveFromNativeBanlist(uint64_t pid, const char* ip) {
         }
         fclose(fin); fclose(fout);
         if (removed > 0) {
-            // JAVÍTVA: Biztonságos fájlkezelés
             if (remove(path) == 0) {
                 if (rename(tmpPath, path) != 0) {
                     Plugin_Printf("^1[Nektum Shield] ^7Failed to rename %s to %s\n", tmpPath, path);
@@ -512,13 +507,10 @@ void QueueDiscordMessage(const char* payload) {
         discordQueueHead = (discordQueueHead + 1) % MAX_DISCORD_QUEUE;
         discordQueueCount--;
     }
-    
-    // JAVÍTVA: Túlcsordulás védelem
     int payloadLen = strlen(payload);
     if (payloadLen >= 2200) {
         Plugin_Printf("^3[Nektum Shield] ^7Discord message truncated (%d chars)\n", payloadLen);
     }
-    
     snprintf(discordQueue[discordQueueTail], 2200, "%s", payload);
     discordQueueTail = (discordQueueTail + 1) % MAX_DISCORD_QUEUE;
     discordQueueCount++;
@@ -531,7 +523,7 @@ void AC_Log(const char *msg) {
     struct tm *t = localtime(&now);
     fprintf(ac_log, "[%02d:%02d:%02d] %s\n", t->tm_hour, t->tm_min, t->tm_sec, msg);
     fflush(ac_log);
-    if (strstr(msg, "[DET]") == NULL && strstr(msg, "[ADMIN") == NULL && strstr(msg, "[AUTO") == NULL) return;
+    if (strstr(msg, "[DET] ") == NULL && strstr(msg, "[ADMIN ") == NULL && strstr(msg, "[AUTO ") == NULL && strstr(msg, "[SUSPECT] ") == NULL) return;
     static char escapedMsg[2048];
     int j = 0;
     for (int i = 0; msg[i] != '\0' && j < (int)sizeof(escapedMsg) - 6; i++) {
@@ -545,7 +537,7 @@ void AC_Log(const char *msg) {
     escapedMsg[j] = '\0';
     static char payload[2200];
     snprintf(payload, sizeof(payload),
-        "{\"content\": \"**Nektum Shield: Log Webhook**\\n```[%02d:%02d:%02d] %s```\"}",
+        "{ \"content\": \"Nektum Shield: Log Webhook\\n`[%02d:%02d:%02d] %s`\" }",
         t->tm_hour, t->tm_min, t->tm_sec, escapedMsg);
     QueueDiscordMessage(payload);
 }
@@ -555,7 +547,7 @@ void NS_LoadBans(void) {
     char home[512], path[600];
     Plugin_Cvar_VariableStringBuffer("fs_homepath", home, sizeof(home));
     snprintf(path, sizeof(path), "%s/" BANLIST_FILE, home);
-    FILE* f = fopen(path, "r");
+    FILE *f = fopen(path, "r");
     if (!f) return;
     char line[512]; g_numBans = 0;
     while (fgets(line, sizeof(line), f) && g_numBans < MAX_BANS) {
@@ -597,7 +589,11 @@ void NS_SaveBans(void) {
 
 void NS_AddBan(uint64_t pid, uint64_t sid, const char* name, const char* subnet24, const char* reason, const char* admin) {
     if (g_numBans >= MAX_BANS) { Plugin_Printf("^1[Nektum Shield] Banlist is full!\n"); return; }
-    for (int i = 0; i < g_numBans; i++) if (g_banlist[i].playerid == pid && pid != 0) return;
+    for (int i = 0; i < g_numBans; i++) {
+        if (pid != 0 && g_banlist[i].playerid == pid) return;
+        if (sid != 0 && g_banlist[i].steamid == sid) return;
+        if (pid == 0 && subnet24 && subnet24[0] && strcmp(g_banlist[i].subnet24, subnet24) == 0) return;
+    }
     g_banlist[g_numBans].playerid = pid; g_banlist[g_numBans].steamid = sid;
     snprintf(g_banlist[g_numBans].name, sizeof(g_banlist[g_numBans].name), "%s", name ? name : "");
     snprintf(g_banlist[g_numBans].subnet24, sizeof(g_banlist[g_numBans].subnet24), "%s", subnet24 ? subnet24 : "");
@@ -809,7 +805,7 @@ void ProcessBan(int invokerSlot, const char* query, const char* reason) {
             }
             if (!foundNID) {
                 char numStr[32]; snprintf(numStr, sizeof(numStr), "%llu", (unsigned long long)num);
-                level_locals_t *level = Plugin_GetLevelBase();
+                level_locals_t* level = Plugin_GetLevelBase();
                 if (level) {
                     for (int i = 0; i < level->maxclients; i++) {
                         client_t* cl = Plugin_GetClientForClientNum(i);
@@ -834,7 +830,7 @@ void ProcessBan(int invokerSlot, const char* query, const char* reason) {
         }
         return;
     }
-    level_locals_t *level = Plugin_GetLevelBase();
+    level_locals_t* level = Plugin_GetLevelBase();
     if (level) {
         char tgt[64]; snprintf(tgt, sizeof(tgt), "%s", query);
         for (int k = 0; tgt[k]; k++) tgt[k] = tolower((unsigned char)tgt[k]);
@@ -981,7 +977,7 @@ void ProcessFindUser(int invokerSlot, const char* query) {
                 if (++matchCount >= 5) { SendResponse(invokerSlot, "^1[Nektum Shield] ^7Too many matches."); return; }
             }
         }
-        level_locals_t *level = Plugin_GetLevelBase();
+        level_locals_t* level = Plugin_GetLevelBase();
         if (level) {
             for (int i = 0; i < level->maxclients; i++) {
                 client_t* cl = Plugin_GetClientForClientNum(i);
@@ -1041,26 +1037,20 @@ void Cmd_NS_Mute(void) {
     if (Plugin_Cmd_GetInvokerPower() < 60) { SendResponse(invoker, "^1[Nektum Shield] ^7No permission."); return; }
     int adminSlot = invoker, argStart = 1;
     if (invoker < 0 && Plugin_Cmd_Argc() >= 2) { adminSlot = atoi(Plugin_Cmd_Argv(1)); argStart = 2; }
-    
     if (Plugin_Cmd_Argc() < argStart + 1) { 
         SendResponse(adminSlot, "^1[Nektum Shield] ^7Usage: mute <player> [reason]"); 
         return; 
     }
-    
     const char* targetQuery = Plugin_Cmd_Argv(argStart);
     char reason[128] = {0};
-    
     for (int i = argStart + 1; i < Plugin_Cmd_Argc(); i++) {
         int len = (int)strlen(reason);
         snprintf(reason + len, sizeof(reason) - len, "%s%s", (i > argStart + 1) ? " " : "", Plugin_Cmd_Argv(i));
     }
-    
-    level_locals_t *level = Plugin_GetLevelBase();
+    level_locals_t* level = Plugin_GetLevelBase();
     if (!level) { SendResponse(adminSlot, "^1[Nektum Shield] ^7Level not available."); return; }
-    
     char tgt[64]; snprintf(tgt, sizeof(tgt), "%s", targetQuery);
     for (int k = 0; tgt[k]; k++) tgt[k] = tolower((unsigned char)tgt[k]);
-    
     for (int i = 0; i < level->maxclients; i++) {
         client_t* cl = Plugin_GetClientForClientNum(i);
         if (cl && cl->state == CS_ACTIVE && !IsBot(cl)) {
@@ -1076,26 +1066,21 @@ void Cmd_NS_Mute(void) {
                     SendResponse(adminSlot, "^1[Nektum Shield] ^7Mute list full!"); 
                     return; 
                 }
-                
                 char adminName[64] = "Console";
                 if (adminSlot >= 0) {
                     client_t* admin = Plugin_GetClientForClientNum(adminSlot);
                     if (admin) StripColorCodes(admin->name, adminName, sizeof(adminName));
                 }
-                
                 g_mutedPlayers[g_numMutes].playerid = cl->playerid;
                 g_mutedPlayers[g_numMutes].steamid = cl->steamid;
                 snprintf(g_mutedPlayers[g_numMutes].name, sizeof(g_mutedPlayers[g_numMutes].name), "%s", cn);
                 snprintf(g_mutedPlayers[g_numMutes].admin, sizeof(g_mutedPlayers[g_numMutes].admin), "%s", adminName);
-                
                 snprintf(g_mutedPlayers[g_numMutes].reason, sizeof(g_mutedPlayers[g_numMutes].reason), "%s", 
                          reason[0] ? reason : "No reason specified");
-                
                 g_mutedPlayers[g_numMutes].muteTime = Plugin_GetRealtime();
                 g_numMutes++; 
                 NS_SaveMutes();
                 pData[i].isMuted = qtrue;
-                
                 if (reason[0]) {
                     SendResponse(adminSlot, "^2[Nektum Shield] ^7Player ^2%s ^7MUTED. Reason: ^2%s", cn, reason);
                     Plugin_ChatPrintf(i, "^1[Nektum Shield] ^7You have been MUTED by admin ^2%s^7. Reason: ^2%s", adminName, reason);
@@ -1103,7 +1088,6 @@ void Cmd_NS_Mute(void) {
                     SendResponse(adminSlot, "^2[Nektum Shield] ^7Player ^2%s ^7MUTED.", cn);
                     Plugin_ChatPrintf(i, "^1[Nektum Shield] ^7You have been MUTED by admin ^2%s^7.", adminName);
                 }
-                
                 AC_Log(AC_va("[ADMIN MUTE] Admin: %s muted: %s (PID: %llu) | Reason: %s", 
                              adminName, cn, (unsigned long long)cl->playerid, 
                              reason[0] ? reason : "No reason specified"));
@@ -1121,7 +1105,7 @@ void Cmd_NS_Unmute(void) {
     if (invoker < 0 && Plugin_Cmd_Argc() >= 2) { adminSlot = atoi(Plugin_Cmd_Argv(1)); argStart = 2; }
     if (Plugin_Cmd_Argc() < argStart + 1) { SendResponse(adminSlot, "^1[Nektum Shield] ^7Usage: unmute <player>"); return; }
     const char* targetQuery = Plugin_Cmd_Argv(argStart);
-    level_locals_t *level = Plugin_GetLevelBase();
+    level_locals_t* level = Plugin_GetLevelBase();
     if (!level) { SendResponse(adminSlot, "^1[Nektum Shield] ^7Level not available."); return; }
     char tgt[64]; snprintf(tgt, sizeof(tgt), "%s", targetQuery);
     for (int k = 0; tgt[k]; k++) tgt[k] = tolower((unsigned char)tgt[k]);
@@ -1195,31 +1179,50 @@ PCL void OnMessageSent(char* message, int slot, qboolean *show, int mode) {
 }
 
 PCL void OnPlayerGotAuthInfo(netadr_t* from, uint64_t* playerid, uint64_t* steamid, char* rejectmsg, qboolean* returnNow, client_t* cl) {
-    if( IsBot(cl)) return;
+    if (!cl || !playerid || !steamid || !rejectmsg || !returnNow || !from) return;
+    if (IsBot(cl)) return;
     char cleanName[64] = "";
-    if (cl && cl->name[0]) StripColorCodes(cl->name, cleanName, sizeof(cleanName));
-    else if (cl) { const char* n = Info_ValueForKey(cl->userinfo, "name"); if (n) StripColorCodes(n, cleanName, sizeof(cleanName)); }
-    char ipBuf[64]; Plugin_NET_AdrToStringMT(from, ipBuf, sizeof(ipBuf));
-    char currentSubnet[20]; GetSubnet24(ipBuf, currentSubnet, sizeof(currentSubnet));
+    if (cl->name[0]) StripColorCodes(cl->name, cleanName, sizeof(cleanName));
+    else { 
+        const char* n = Info_ValueForKey(cl->userinfo, "name"); 
+        if (n) StripColorCodes(n, cleanName, sizeof(cleanName)); 
+    }
+    char ipBuf[64] = ""; 
+    Plugin_NET_AdrToStringMT(from, ipBuf, sizeof(ipBuf));
+    char currentSubnet[20] = ""; 
+    GetSubnet24(ipBuf, currentSubnet, sizeof(currentSubnet));
     time_t now_t = time(NULL);
-    if (*playerid == lastBlockedPID && (now_t - lastBlockedTime) < 30) {
-        *returnNow = qtrue; snprintf(rejectmsg, 1023, "Connection refused.\nContact admins at: www.discord.yob.at"); return;
+    if (*playerid != 0 && *playerid == lastBlockedPID && (now_t - lastBlockedTime) < 30) {
+        *returnNow = qtrue;
+        snprintf(rejectmsg, 1023, "Connection refused.\nContact admins at: www.discord.yob.at");
+        return;
     }
-    if (strcmp(ipBuf, lastBlockedIP) == 0 && (now_t - lastBlockedTime) < 30) {
-        *returnNow = qtrue; snprintf(rejectmsg, 1023, "Connection refused.\nContact admins at: www.discord.yob.at"); return;
+    if (ipBuf[0] != '\0' && strcmp(ipBuf, lastBlockedIP) == 0 && (now_t - lastBlockedTime) < 30) {
+        *returnNow = qtrue;
+        snprintf(rejectmsg, 1023, "Connection refused.\nContact admins at: www.discord.yob.at");
+        return;
     }
-    int clientNektumID = 0;
-    if (cl && cl->gentity) clientNektumID = Plugin_GetStat(cl->gentity->s.clientNum, STAT_NEKTUM_ID);
     char reason[128] = {0};
     nsBanStatus_t status = NS_CheckBanStatus(*playerid, *steamid, cleanName, currentSubnet, reason, sizeof(reason));
     int nameLen = (int)strlen(cleanName);
     qboolean isCGNAT = IsCGNAT(ipBuf);
-    if (status == NS_BANNED_BY_ID || status == NS_BANNED_BY_NAME) {
-        if (nameLen >= 7) {
-            NS_AddBan(*playerid, *steamid, cleanName, isCGNAT ? "" : currentSubnet, reason, "Nektum Shield");
-        }
+    if (status == NS_BANNED_BY_ID) {
+        *returnNow = qtrue;
+        snprintf(rejectmsg, 1023, "Connection refused.\nContact admins at: www.discord.yob.at");
+        lastBlockedPID = *playerid;
+        lastBlockedTime = now_t;
+        if (ipBuf[0] != '\0') snprintf(lastBlockedIP, sizeof(lastBlockedIP), "%s", ipBuf);
+        return;
     }
-    if (currentSubnet[0] != '\0' && !IsCGNAT(ipBuf)) {
+    if (status == NS_BANNED_BY_NAME && nameLen >= 7) {
+        *returnNow = qtrue;
+        snprintf(rejectmsg, 1023, "Connection refused.\nContact admins at: www.discord.yob.at");
+        lastBlockedPID = *playerid;
+        lastBlockedTime = now_t;
+        if (ipBuf[0] != '\0') snprintf(lastBlockedIP, sizeof(lastBlockedIP), "%s", ipBuf);
+        return;
+    }
+    if (currentSubnet[0] != '\0' && !isCGNAT) {
         qboolean evasion = qfalse;
         for (int i = 0; i < g_numBans; i++) {
             if (g_banlist[i].subnet24[0] != '\0' && strcmp(g_banlist[i].subnet24, currentSubnet) == 0) {
@@ -1228,56 +1231,12 @@ PCL void OnPlayerGotAuthInfo(netadr_t* from, uint64_t* playerid, uint64_t* steam
         }
         if (evasion && nameLen >= 7) {
             NS_AddBan(*playerid, *steamid, cleanName, currentSubnet, "Ban Evasion (Subnet Match)", "Nektum Shield");
-        }
-    }
-    if (*playerid != 0 && cleanName[0] != '\0') {
-        char lcn[64]; snprintf(lcn, sizeof(lcn), "%s", cleanName);
-        for (int k = 0; lcn[k]; k++) lcn[k] = tolower((unsigned char)lcn[k]);
-        int uidx = -1;
-        for (int i = 0; i < g_numUsers; i++) if (g_users[i].playerid == *playerid) { uidx = i; break; }
-        if (uidx != -1) {
-            qboolean changed = qfalse;
-            char rn[64]; StripColorCodes(g_users[uidx].name, rn, sizeof(rn));
-            char lrn[64]; snprintf(lrn, sizeof(lrn), "%s", rn);
-            for (int k = 0; lrn[k]; k++) lrn[k] = tolower((unsigned char)lrn[k]);
-            if (strcmp(lrn, lcn) != 0) { snprintf(g_users[uidx].name, sizeof(g_users[uidx].name), "%s", cleanName); changed = qtrue; }
-            if (currentSubnet[0] != '\0' && strcmp(g_users[uidx].subnet24, currentSubnet) != 0) {
-                snprintf(g_users[uidx].subnet24, sizeof(g_users[uidx].subnet24), "%s", currentSubnet); changed = qtrue;
-            }
-            if (changed) {
-                NS_SaveUsers();
-                AC_Log(AC_va("[REG] Updated user PID: %llu | Name: '%s'%s", (unsigned long long)*playerid, cleanName, isCGNAT ? " [CGNAT]" : ""));
-            }
-        } else {
-            int nameIdx = -1;
-            for (int i = 0; i < g_numUsers; i++) {
-                char rn[64]; StripColorCodes(g_users[i].name, rn, sizeof(rn));
-                char lrn[64]; snprintf(lrn, sizeof(lrn), "%s", rn);
-                for (int k = 0; lrn[k]; k++) lrn[k] = tolower((unsigned char)lrn[k]);
-                if (strcmp(lrn, lcn) == 0) { nameIdx = i; break; }
-            }
-            if (nameIdx != -1) {
-                if (IsSameIdentity(&g_users[nameIdx], *playerid, *steamid, currentSubnet, clientNektumID)) {
-                    int preservedNektumID = g_users[nameIdx].nektumID;
-                    g_users[nameIdx].playerid = *playerid;
-                    g_users[nameIdx].steamid = *steamid;
-                    if (!isCGNAT) snprintf(g_users[nameIdx].subnet24, sizeof(g_users[nameIdx].subnet24), "%s", currentSubnet);
-                    NS_SaveUsers();
-                    AC_Log(AC_va("[REG] Identity verified! Preserved NID: %d for '%s' (New PID: %llu)", preservedNektumID, cleanName, (unsigned long long)*playerid));
-                } else {
-                    AC_Log(AC_va("[KICK PREP] Name theft! New PID: %llu trying to steal '%s' (Original NID: %d)", (unsigned long long)*playerid, cleanName, g_users[nameIdx].nektumID));
-                }
-            } else {
-                if (g_numUsers < MAX_USERS) {
-                    g_users[g_numUsers].playerid = *playerid;
-                    g_users[g_numUsers].steamid = *steamid;
-                    snprintf(g_users[g_numUsers].name, sizeof(g_users[g_numUsers].name), "%s", cleanName);
-                    snprintf(g_users[g_numUsers].subnet24, sizeof(g_users[g_numUsers].subnet24), "%s", currentSubnet);
-                    g_users[g_numUsers].nektumID = g_nextNektumID++;
-                    g_numUsers++; NS_SaveUsers();
-                    AC_Log(AC_va("[REG] New user! PID: %llu | Name: %s | NID: %d%s", (unsigned long long)*playerid, cleanName, g_users[g_numUsers-1].nektumID, isCGNAT ? " [CGNAT]" : ""));
-                }
-            }
+            *returnNow = qtrue;
+            snprintf(rejectmsg, 1023, "Connection refused.\nContact admins at: www.discord.yob.at");
+            lastBlockedPID = *playerid;
+            lastBlockedTime = now_t;
+            if (ipBuf[0] != '\0') snprintf(lastBlockedIP, sizeof(lastBlockedIP), "%s", ipBuf);
+            return;
         }
     }
 }
@@ -1317,24 +1276,80 @@ PCL void OnClientEnterWorld(client_t* client) {
     int id = client->gentity->s.clientNum;
     if (id < 0 || id >= MAXP) return;
     memset(&pData[id], 0, sizeof(acData_t));
-
     int initTime = Plugin_Milliseconds();
     pData[id].logicWindowStart = initTime;
     pData[id].lastScrollTime = initTime;
     pData[id].lastRateTime = initTime;
     pData[id].lastConsistencyTime = initTime;
+    
+    level_locals_t *lvl = Plugin_GetLevelBase();
+    float gameTime = lvl ? (lvl->time / 1000.0f) : 0.0f;
+    for (int j = 0; j < MAXP; j++) {
+        pData[id].enemyLastSeenTime[j] = gameTime;
+    }
 
     char cleanName[64] = ""; StripColorCodes(client->name, cleanName, sizeof(cleanName));
     char ipBuf[64]; Plugin_NET_AdrToStringMT(&client->netchan.remoteAddress, ipBuf, sizeof(ipBuf));
     char currentSubnet[20]; GetSubnet24(ipBuf, currentSubnet, sizeof(currentSubnet));
     char reason[128] = {0};
     nsBanStatus_t status = NS_CheckBanStatus(client->playerid, client->steamid, cleanName, currentSubnet, reason, sizeof(reason));
+
+    if (client->playerid != 0 && cleanName[0] != '\0') {
+        char lcn[64]; snprintf(lcn, sizeof(lcn), "%s", cleanName);
+        for (int k = 0; lcn[k]; k++) lcn[k] = tolower((unsigned char)lcn[k]);
+        int uidx = -1;
+        for (int i = 0; i < g_numUsers; i++) if (g_users[i].playerid == client->playerid) { uidx = i; break; }
+        if (uidx != -1) {
+            qboolean changed = qfalse;
+            char rn[64]; StripColorCodes(g_users[uidx].name, rn, sizeof(rn));
+            char lrn[64]; snprintf(lrn, sizeof(lrn), "%s", rn);
+            for (int k = 0; lrn[k]; k++) lrn[k] = tolower((unsigned char)lrn[k]);
+            if (strcmp(lrn, lcn) != 0) { snprintf(g_users[uidx].name, sizeof(g_users[uidx].name), "%s", cleanName); changed = qtrue; }
+            if (currentSubnet[0] != '\0' && strcmp(g_users[uidx].subnet24, currentSubnet) != 0) {
+                snprintf(g_users[uidx].subnet24, sizeof(g_users[uidx].subnet24), "%s", currentSubnet); changed = qtrue;
+            }
+            if (changed) {
+                NS_SaveUsers();
+                AC_Log(AC_va("[REG] Updated user PID: %llu | Name: '%s'%s", (unsigned long long)client->playerid, cleanName, IsCGNAT(ipBuf) ? " [CGNAT]" : ""));
+            }
+        } else {
+            int nameIdx = -1;
+            for (int i = 0; i < g_numUsers; i++) {
+                char rn[64]; StripColorCodes(g_users[i].name, rn, sizeof(rn));
+                char lrn[64]; snprintf(lrn, sizeof(lrn), "%s", rn);
+                for (int k = 0; lrn[k]; k++) lrn[k] = tolower((unsigned char)lrn[k]);
+                if (strcmp(lrn, lcn) == 0) { nameIdx = i; break; }
+            }
+            if (nameIdx != -1) {
+                int clientNektumID = Plugin_GetStat(id, STAT_NEKTUM_ID);
+                if (IsSameIdentity(&g_users[nameIdx], client->playerid, client->steamid, currentSubnet, clientNektumID)) {
+                    int preservedNektumID = g_users[nameIdx].nektumID;
+                    g_users[nameIdx].playerid = client->playerid;
+                    g_users[nameIdx].steamid = client->steamid;
+                    if (!IsCGNAT(ipBuf)) snprintf(g_users[nameIdx].subnet24, sizeof(g_users[nameIdx].subnet24), "%s", currentSubnet);
+                    NS_SaveUsers();
+                    AC_Log(AC_va("[REG] Identity verified! Preserved NID: %d for '%s' (New PID: %llu)", preservedNektumID, cleanName, (unsigned long long)client->playerid));
+                }
+            } else {
+                if (g_numUsers < MAX_USERS) {
+                    g_users[g_numUsers].playerid = client->playerid;
+                    g_users[g_numUsers].steamid = client->steamid;
+                    snprintf(g_users[g_numUsers].name, sizeof(g_users[g_numUsers].name), "%s", cleanName);
+                    snprintf(g_users[g_numUsers].subnet24, sizeof(g_users[g_numUsers].subnet24), "%s", currentSubnet);
+                    g_users[g_numUsers].nektumID = g_nextNektumID++;
+                    g_numUsers++; NS_SaveUsers();
+                    AC_Log(AC_va("[REG] New user! PID: %llu | Name: %s | NID: %d%s", (unsigned long long)client->playerid, cleanName, g_users[g_numUsers-1].nektumID, IsCGNAT(ipBuf) ? " [CGNAT]" : ""));
+                }
+            }
+        }
+    }
+
     if (status == NS_BANNED_BY_ID) {
         if (Plugin_GetStat(id, STAT_CHEATER_MARK) != 1) Plugin_SetStat(id, STAT_CHEATER_MARK, 1);
         Nektum_PersistentBan(id, reason);
         return;
     }
-    if (status == NS_BANNED_BY_NAME) {
+    if (status == NS_BANNED_BY_NAME && client->state == CS_ACTIVE) {
         AC_Log(AC_va("[KICK] Banned name on enter! Dropping: %s (PID: %llu)", client->name, (unsigned long long)client->playerid));
         Plugin_DropClient(id, "Choose a different and unique name with at least 7 characters.");
         return;
@@ -1378,29 +1393,24 @@ PCL void OnClientMoveCommand(client_t* client, usercmd_t* ucmd) {
     if (!client || !client->gentity || IsBot(client)) return;
     int id = client->gentity->s.clientNum;
     if (id < 0 || id >= MAXP || pData[id].pendingBan || pData[id].scheduledDropTime > 0) return;
-    gclient_t *gcl = client->gentity->client;
-    if (gcl->sess.sessionState != STATE_PLAYING) return;
+    gclient_t* gcl = client->gentity->client;
+    if (!gcl || gcl->sess.sessionState != STATE_PLAYING) return;
     level_locals_t* level = Plugin_GetLevelBase();
     float now = level ? (level->time / 1000.0f) : (ucmd->serverTime / 1000.0f);
     vec3_t currentOrigin;
     VectorCopy(client->gentity->r.currentOrigin, currentOrigin);
-    
-    // JAVÍTVA: sqrtf() optimalizálás - moveDistSq használata
     float dx = currentOrigin[0] - pData[id].lastOrigin[0];
     float dy = currentOrigin[1] - pData[id].lastOrigin[1];
     float dz = currentOrigin[2] - pData[id].lastOrigin[2];
     float moveDistSq = dx*dx + dy*dy + dz*dz;
     float thresholdSq = cvars.alttab_move_dist * cvars.alttab_move_dist;
     if (moveDistSq > thresholdSq) pData[id].lastMoveTime = now;
-    
     qboolean isMoving = (now - pData[id].lastMoveTime) < cvars.alttab_move_time;
     VectorCopy(currentOrigin, pData[id].lastOrigin);
     vec3_t ca; ca[0] = ShortToAngle(ucmd->angles[0]); ca[1] = ShortToAngle(ucmd->angles[1]); ca[2] = 0.0f;
-    
     if (pData[id].lastAngles[1] != 0.0f) {
         float yc = GetYawDist(ca[1], pData[id].lastAngles[1]);
         int dt = ucmd->serverTime - pData[id].lastCmdTime;
-        
         if (isMoving && dt >= 15 && dt <= 100 && yc > cvars.snap_threshold && now - pData[id].lastSnapAimTime > 5.0f) {
             pData[id].acScore += 10; 
             snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aimbot");
@@ -1408,141 +1418,105 @@ PCL void OnClientMoveCommand(client_t* client, usercmd_t* ucmd) {
             pData[id].lastSnapAimTime = now;
             AC_Log(AC_va("[DET] Aimbot | Snap %.1f deg in %dms | P: %s", yc, dt, client->name));
         }
-        
         if (isMoving && dt >= 15 && dt <= 100 && yc > cvars.snap_kill_angle) {
-            pData[id].lastSnapTime = now;
+            pData[id].lastSnapKillTime = now; 
+        }
+        if (yc > 120.0f) {
+            pData[id].lastLargeSnapTime = now;
+            AngleVectors(ca, pData[id].largeSnapForward);
         }
     }
-    
     int cp = ucmd->angles[0] & 65535, cy = ucmd->angles[1] & 65535;
     qboolean firing = (ucmd->buttons & 1) ? qtrue : qfalse;
     int nowMs = Plugin_Milliseconds();
     qboolean currentADS = (ucmd->buttons & 256) ? qtrue : qfalse;
     pData[id].isADS = currentADS;
-
     if (firing && !pData[id].wasFiring) {
         if (client->gentity && client->gentity->client) {
             playerState_t* ps = &client->gentity->client->ps;
-            
-            pData[id].lastShotAngles[0] = ps->viewangles[0]; // Pitch (világ-szög)
-            pData[id].lastShotAngles[1] = ps->viewangles[1]; // Yaw (világ-szög)
+            pData[id].lastShotAngles[0] = ps->viewangles[0];
+            pData[id].lastShotAngles[1] = ps->viewangles[1];
             pData[id].lastShotAngles[2] = 0.0f;
-            
             VectorCopy(currentOrigin, pData[id].lastShotOrigin);
             pData[id].lastShotTime = now;
             pData[id].hasShotData = qtrue;
             pData[id].lastShotADS = pData[id].isADS;
         }
-        
+
         if (nowMs - pData[id].logicWindowStart >= cvars.macro_logic_window) {
             pData[id].logicWindowStart = nowMs;
             pData[id].logicClickCount = 1;
-        } else {
-            pData[id].logicClickCount++;
-        }
-        
+        } else pData[id].logicClickCount++;
+
         if (pData[id].logicClickCount >= cvars.macro_logic_clicks) {
             pData[id].logicStrikes += 1.0f;
             if (pData[id].logicStrikes >= cvars.macro_logic_strikes) {
                 pData[id].logicStrikes = 0.0f;
-                pData[id].acScore += 5;
-                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "Macro (Logic)");
-                pData[id].lastScoreUpdate = now;
-                AC_Log(AC_va("[DET] MACRO LOGIC | %d clicks in %dms | Strikes reached | P: %s", 
-                    pData[id].logicClickCount, cvars.macro_logic_window, client->name));
-                Plugin_ChatPrintf(-1, "^1[Nektum Shield] ^7Do not use macro^1 %s! ^7It's not allowed and you will get banned^1!", client->name);
-            } else {
-                AC_Log(AC_va("[DET] MACRO LOGIC | %d clicks in %dms | Strike %.1f/%.1f | P: %s", 
-                    pData[id].logicClickCount, cvars.macro_logic_window,
-                    pData[id].logicStrikes, cvars.macro_logic_strikes, client->name));
-                Plugin_ChatPrintf(-1, "^1[Nektum Shield] ^7Do not use macro^1 %s! ^7It's not allowed and you will get banned^1!", client->name);
+                AC_Log(AC_va("[DET] Macro Logic KICK | Clicks:%d | Window:%dms | P:%s",
+                                pData[id].logicClickCount, cvars.macro_logic_window, client->name));
+                Plugin_DropClient(id, MACRO_KICK_REASON);
+                return;
             }
             pData[id].logicClickCount = 0;
             pData[id].logicWindowStart = nowMs;
-        } else {
-            if (pData[id].logicStrikes > 0.0f && pData[id].logicClickCount == 1) {
-                pData[id].logicStrikes -= 0.2f;
-                if (pData[id].logicStrikes < 0.0f) pData[id].logicStrikes = 0.0f;
-            }
+        } else if (pData[id].logicStrikes > 0.0f && pData[id].logicClickCount == 1) {
+            pData[id].logicStrikes -= 0.2f;
+            if (pData[id].logicStrikes < 0.0f) pData[id].logicStrikes = 0.0f;
         }
 
         int scrollDiff = nowMs - pData[id].lastScrollTime;
-        if (scrollDiff < cvars.macro_scroll_fast) {
-            pData[id].scrollFastCount++;
-        } else if (scrollDiff >= cvars.macro_scroll_reset) {
-            pData[id].scrollFastCount = 0;
-        }
-        
+        if (scrollDiff > 0 && scrollDiff < cvars.macro_scroll_fast) pData[id].scrollFastCount++;
+        else if (scrollDiff >= cvars.macro_scroll_reset) pData[id].scrollFastCount = 0;
         if (pData[id].scrollFastCount >= cvars.macro_scroll_count) {
             pData[id].scrollFastCount = 0;
-            pData[id].acScore += 5;
-            snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "Macro (Scroll)");
-            pData[id].lastScoreUpdate = now;
-            AC_Log(AC_va("[DET] MACRO SCROLL | %d clicks <%dms | P: %s", 
-                cvars.macro_scroll_count, cvars.macro_scroll_fast, client->name));
-            Plugin_ChatPrintf(-1, "^1[Nektum Shield] ^7Do not use macro^1 %s! ^7It's not allowed and you will get banned^1!", client->name);
+            AC_Log(AC_va("[DET] Macro Scroll KICK | Count:%d | Gap<%dms | P:%s",
+                            cvars.macro_scroll_count, cvars.macro_scroll_fast, client->name));
+            Plugin_DropClient(id, MACRO_KICK_REASON);
+            return;
         }
         pData[id].lastScrollTime = nowMs;
 
         int rateDiff = nowMs - pData[id].lastRateTime;
-        if (rateDiff < cvars.macro_rate_fast) {
-            pData[id].rateFastCount++;
-        } else {
-            if (pData[id].rateFastCount > 0) pData[id].rateFastCount--;
-        }
-        
+        if (rateDiff > 0 && rateDiff < cvars.macro_rate_fast) pData[id].rateFastCount++;
+        else if (pData[id].rateFastCount > 0) pData[id].rateFastCount--;
         if (pData[id].rateFastCount >= cvars.macro_rate_count) {
             pData[id].rateFastCount = 0;
-            pData[id].acScore += 5;
-            snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "Macro (Rate)");
-            pData[id].lastScoreUpdate = now;
-            AC_Log(AC_va("[DET] MACRO RATE | %d clicks <%dms | P: %s", 
-                cvars.macro_rate_count, cvars.macro_rate_fast, client->name));
-            Plugin_ChatPrintf(-1, "^1[Nektum Shield] ^7Do not use macro^1 %s! ^7It's not allowed and you will get banned^1!", client->name);
+            AC_Log(AC_va("[DET] Macro Rate KICK | Count:%d | Gap<%dms | P:%s",
+                            cvars.macro_rate_count, cvars.macro_rate_fast, client->name));
+            Plugin_DropClient(id, MACRO_KICK_REASON);
+            return;
         }
         pData[id].lastRateTime = nowMs;
 
         int consistencyGap = nowMs - pData[id].lastConsistencyTime;
-        if (consistencyGap < cvars.macro_consistency_gap) {
-            if (consistencyGap == pData[id].lastConsistencyGap && consistencyGap > 0) {
+        if (consistencyGap > 0 && consistencyGap < cvars.macro_consistency_gap) {
+            if (pData[id].lastConsistencyGap > 0 && abs(consistencyGap - pData[id].lastConsistencyGap) <= 2)
                 pData[id].consistencyMatchCount++;
-            } else {
-                if (pData[id].consistencyMatchCount > 0) pData[id].consistencyMatchCount--;
-            }
-            
+            else pData[id].consistencyMatchCount = 0;
             if (pData[id].consistencyMatchCount >= cvars.macro_consistency_count) {
                 pData[id].consistencyMatchCount = 0;
-                pData[id].acScore += 5;
-                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "Macro (Consistency)");
-                pData[id].lastScoreUpdate = now;
-                AC_Log(AC_va("[DET] MACRO CONSISTENCY | %d identical gaps (%dms) | P: %s", 
-                    cvars.macro_consistency_count, consistencyGap, client->name));
-                Plugin_ChatPrintf(-1, "^1[Nektum Shield] ^7Do not use macro^1 %s! ^7It's not allowed and you will get banned^1!", client->name);
+                AC_Log(AC_va("[DET] Macro Consistency KICK | Count:%d | Gap:%dms (+/-2ms) | P:%s",
+                                cvars.macro_consistency_count, consistencyGap, client->name));
+                Plugin_DropClient(id, MACRO_KICK_REASON);
+                return;
             }
-        }
+        } else pData[id].consistencyMatchCount = 0;
         pData[id].lastConsistencyGap = consistencyGap;
         pData[id].lastConsistencyTime = nowMs;
     }
 
     qboolean wasFiringPrev = pData[id].wasFiring;
     pData[id].wasFiring = firing;
-
     if (firing) {
         if (wasFiringPrev) {
             pData[id].firingFrames++;
             int dp = cp - pData[id].lastPitch;
             int dy = cy - pData[id].lastYaw;
-            
             if (dp > 32768) dp -= 65536;
             if (dp < -32768) dp += 65536;
-            
-            if (dy > 32768) dy -= 65536;
-            if (dy < -32768) dy += 65536;
-            
             float pd = ShortToAngle(cp); if (pd > 180.0f) pd -= 360.0f;
             if (pd <= 80.0f && pd >= -80.0f && dy > -3 && dy < 3) pData[id].recoilZeroYawFrames++;
             float dpf = (float)dp;
-
             if (pData[id].isADS) {
                 if (abs(dp) <= 8 && abs(dy) <= 8) {
                     pData[id].adsZeroMoveFrames++;
@@ -1566,25 +1540,23 @@ PCL void OnClientMoveCommand(client_t* client, usercmd_t* ucmd) {
             float varPitch = (pData[id].pitchSqSum / (float)pData[id].recoilSamples) - (meanPitch * meanPitch);
             if (varPitch < cvars.recoil_macro_var && meanPitch < cvars.recoil_macro_mean && now - pData[id].lastMacroDetTime > 10.0f) {
                 pData[id].acScore += 10;
-                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "No-Recoil Macro");
+                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: No-Recoil");
                 pData[id].lastScoreUpdate = now; pData[id].lastMacroDetTime = now;
                 AC_Log(AC_va("[DET] No-Recoil | Pitch Var: %.2f, Mean: %.2f | P: %s", varPitch, meanPitch, client->name));
             }
             float ys = (float)pData[id].recoilZeroYawFrames / (float)pData[id].firingFrames;
             if (ys > cvars.norecoil_threshold && now - pData[id].lastNoRecoilTime > 10.0f) {
-                pData[id].acScore += 10; snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "No Recoil (Static)");
+                pData[id].acScore += 10; snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: No-Recoil");
                 pData[id].lastScoreUpdate = now; pData[id].lastNoRecoilTime = now;
                 AC_Log(AC_va("[DET] No Recoil | DESC: %.1f%% stability | P: %s", ys * 100.0f, client->name));
             }
-            
             float zeroMoveRatio = (float)pData[id].adsZeroMoveFrames / (float)pData[id].firingFrames;
-            
-            if (pData[id].adsZeroMoveFrames >= cvars.ads_norecoil_frames  // ✅ CVAR használata
-                && pData[id].firingFrames >= 120                           // ✅ Legalább 100 frame (2 mp)
-                && zeroMoveRatio >= 0.80f                                  // ✅ Legalább 70% zero-move
+            if (pData[id].adsZeroMoveFrames >= cvars.ads_norecoil_frames
+                && pData[id].firingFrames >= 120
+                && zeroMoveRatio >= 0.80f
                 && now - pData[id].lastNoRecoilTime > 30.0f) {
                 pData[id].acScore += 20;
-                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "No-Recoil");
+                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: No-Recoil");
                 pData[id].lastScoreUpdate = now;
                 pData[id].lastNoRecoilTime = now;
                 AC_Log(AC_va("[DET] No-Recoil ADS | %d zero-move frames / %d total frames (%.1f%%) | P: %s", 
@@ -1600,7 +1572,6 @@ PCL void OnClientMoveCommand(client_t* client, usercmd_t* ucmd) {
         pData[id].pitchSqSum = 0.0f; 
         pData[id].recoilSamples = 0;
     }
-    
     pData[id].lastPitch = cp; pData[id].lastYaw = cy;
     VectorCopy(ca, pData[id].lastAngles); pData[id].lastCmdTime = ucmd->serverTime;
     if (pData[id].acScore >= cvars.score_ban && !pData[id].pendingBan) {
@@ -1619,51 +1590,59 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
     if (id < 0 || id >= MAXP) return;
     client_t* cl = Plugin_GetClientForClientNum(id);
     if (!cl || IsBot(cl) || pData[id].pendingBan || pData[id].scheduledDropTime > 0) return;
-    gclient_t *gcl = attacker->client;
-    if (gcl->sess.sessionState != STATE_PLAYING) return;
+    gclient_t* gcl = attacker->client;
+    if (!gcl || gcl->sess.sessionState != STATE_PLAYING) return;
     if (meansOfDeath != MOD_PISTOL_BULLET && meansOfDeath != MOD_RIFLE_BULLET && meansOfDeath != MOD_HEAD_SHOT) return;
+    if (hitLocation == HITLOC_NONE) return;
     level_locals_t* level = Plugin_GetLevelBase();
     float now = level ? (level->time / 1000.0f) : 0.0f;
-    
     pData[id].lastScoreUpdate = now; 
     pData[id].kills++;
-    
     int nowMs = Plugin_Milliseconds();
-    
+    vec3_t currentViewAngles;
+    if (attacker->client) {
+        currentViewAngles[0] = attacker->client->ps.viewangles[0];
+        currentViewAngles[1] = attacker->client->ps.viewangles[1];
+        currentViewAngles[2] = 0.0f;
+    } else {
+        currentViewAngles[0] = 0.0f;
+        currentViewAngles[1] = 0.0f;
+        currentViewAngles[2] = 0.0f;
+    }
     if (pData[id].lastKillTime > 0 && (nowMs - pData[id].lastKillTime) < 5000) {
         float timeBetweenKills = (float)(nowMs - pData[id].lastKillTime);
-        
-        vec3_t dir1, dir2;
-        VectorSubtract(pData[id].lastKillVictimOrigin, attacker->r.currentOrigin, dir1);
-        VectorSubtract(self->r.currentOrigin, attacker->r.currentOrigin, dir2);
-        VectorNormalize(dir1, dir1);
-        VectorNormalize(dir2, dir2);
-        float dot = DotProduct(dir1, dir2);
-        
+        vec3_t forward1, forward2;
+        AngleVectors(pData[id].lastKillViewAngles, forward1);
+        AngleVectors(currentViewAngles, forward2);
+        float dot = DotProduct(forward1, forward2);
         if (dot > 1.0f) dot = 1.0f;
         if (dot < -1.0f) dot = -1.0f;
-        
-        float angleBetweenVictims = acosf(dot) * (180.0f / (float)M_PI);
-        
-        if (timeBetweenKills > 50.0f && timeBetweenKills < (cvars.target_switch_time * 1000.0f) && angleBetweenVictims > cvars.target_switch_angle) {
+        float cameraTurnAngle = acosf(dot) * (180.0f / (float)M_PI);
+        float dx = self->r.currentOrigin[0] - attacker->r.currentOrigin[0];
+        float dy = self->r.currentOrigin[1] - attacker->r.currentOrigin[1];
+        float currentKillDist = sqrtf(dx*dx + dy*dy);
+        if (timeBetweenKills > 50.0f 
+            && timeBetweenKills < (cvars.target_switch_time * 1000.0f) 
+            && cameraTurnAngle > cvars.target_switch_angle
+            && currentKillDist > 400.0f) {
             pData[id].rapidSwitchKills++;
-            AC_Log(AC_va("[DET] Target Switch | 2 kills in %.0fms, %.1f° apart | P: %s", 
-                timeBetweenKills, angleBetweenVictims, cl->name));
-            
+            AC_Log(AC_va("[DET] Target Switch | 2 kills in %.0fms, Camera turned %.1f° | P: %s", 
+                timeBetweenKills, cameraTurnAngle, cl->name));
             if (pData[id].rapidSwitchKills >= cvars.target_switch_streak) {
-                pData[id].acScore += 20;
-                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "Aim Assist (Target Switching)");
+                pData[id].acScore += 10;
+                snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aim Assist");
                 pData[id].lastScoreUpdate = now;
                 pData[id].rapidSwitchKills = 0;
             }
         } else {
-            pData[id].rapidSwitchKills = 0;
+            if (timeBetweenKills > (cvars.target_switch_time * 1000.0f) || cameraTurnAngle < cvars.target_switch_angle) {
+                pData[id].rapidSwitchKills = 0;
+            }
         }
     }
-    
     pData[id].lastKillTime = nowMs;
+    VectorCopy(currentViewAngles, pData[id].lastKillViewAngles);
     VectorCopy(self->r.currentOrigin, pData[id].lastKillVictimOrigin);
-    
     if (hitLocation == HITLOC_HEAD || hitLocation == HITLOC_HELMET || hitLocation == HITLOC_NECK || hitLocation == HITLOC_TORSO_UPR) {
         pData[id].headshots++; 
         pData[id].hsStreak++;
@@ -1671,40 +1650,40 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
     } else {
         pData[id].hsStreak = 0;
     }
-    
     if (hitLocation == HITLOC_TORSO_UPR || hitLocation == HITLOC_TORSO_LWR) {
         pData[id].blStreak++;
         if (pData[id].blStreak == 1) pData[id].firstBlInStreakTime = now;
     } else {
         pData[id].blStreak = 0;
     }
-
+    
+    // SLIDING WINDOW HS RATIO CHECK
     if (pData[id].kills >= cvars.min_kills) {
-        int killsSinceLastCheck = pData[id].kills - pData[id].lastHsRatioCheckKills;
-        if (killsSinceLastCheck >= cvars.min_kills) {
-            float hr = (float)pData[id].headshots / (float)pData[id].kills;
+        int windowKills = pData[id].kills - pData[id].lastHsRatioCheckKills;
+        int windowHS = pData[id].headshots - pData[id].lastHsRatioCheckHeadshots;
+        
+        if (windowKills >= cvars.min_kills) {
+            float hr = (float)windowHS / (float)windowKills;
             if (hr > cvars.hs_ratio) {
                 pData[id].acScore += 20;
                 snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aimbot");
                 pData[id].lastScoreUpdate = now;
-                pData[id].lastHsRatioCheckKills = pData[id].kills;
-                AC_Log(AC_va("[DET] Aimbot | HS ratio %.2f (%d/%d) | P: %s", hr, pData[id].headshots, pData[id].kills, cl->name));
-            } else { 
-                pData[id].lastHsRatioCheckKills = pData[id].kills; 
+                AC_Log(AC_va("[DET] Aimbot | Window HS ratio %.2f (%d/%d) | P: %s", hr, windowHS, windowKills, cl->name));
             }
+            pData[id].lastHsRatioCheckKills = pData[id].kills;
+            pData[id].lastHsRatioCheckHeadshots = pData[id].headshots;
         }
     }
-    
+
     if (pData[id].hsStreak >= cvars.time_hs_streak) {
         if (now - pData[id].firstHsInStreakTime <= cvars.time_hs_window) {
-            pData[id].acScore += 30; 
+            pData[id].acScore += 20; 
             snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aimbot");
             pData[id].lastScoreUpdate = now;
             AC_Log(AC_va("[DET] Time HS Streak | %d HS in %.1fs | P: %s", pData[id].hsStreak, now - pData[id].firstHsInStreakTime, cl->name));
             pData[id].hsStreak = 0;
         }
     }
-    
     if (pData[id].blStreak >= cvars.time_bl_streak) {
         if (now - pData[id].firstBlInStreakTime <= cvars.time_bl_window) {
             pData[id].acScore += 30; 
@@ -1714,7 +1693,6 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
             pData[id].blStreak = 0;
         }
     }
-    
     if (hitLocation != HITLOC_NONE) {
         if (hitLocation == pData[id].lastHitLoc) { 
             pData[id].sameHitStreak++; 
@@ -1723,7 +1701,6 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
             pData[id].lastHitLoc = hitLocation;
             pData[id].firstSameHitTime = now;
         }
-        
         if (pData[id].sameHitStreak >= cvars.body_lock_streak && (now - pData[id].firstSameHitTime) <= cvars.time_bl_window && (now - pData[id].lastBodyLockTime) > 15.0f) {
             pData[id].acScore += 30;
             snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aim Assist");
@@ -1740,30 +1717,25 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
             pData[id].sameHitStreak = 0;
         }
     }
-    
-    if (pData[id].lastSnapTime > 0.0f && (now - pData[id].lastSnapTime) <= cvars.snap_kill_window) {
+    if (pData[id].lastSnapKillTime > 0.0f && (now - pData[id].lastSnapKillTime) <= cvars.snap_kill_window) {
         pData[id].acScore += 8;
         snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aimbot");
         pData[id].lastScoreUpdate = now;
-        float timeSinceSnap = now - pData[id].lastSnapTime;
-        pData[id].lastSnapTime = 0.0f;
+        float timeSinceSnap = now - pData[id].lastSnapKillTime;
+        pData[id].lastSnapKillTime = 0.0f;
         AC_Log(AC_va("[DET] Snap + Kill | %.1f deg snap followed by kill in %.1fs | P: %s", 
             cvars.snap_kill_angle, timeSinceSnap, cl->name));
     }
-
     float dx = self->r.currentOrigin[0] - attacker->r.currentOrigin[0];
     float dy = self->r.currentOrigin[1] - attacker->r.currentOrigin[1];
     float dist = sqrtf(dx*dx + dy*dy);
-    
     qboolean isMovingWhileShooting = qfalse;
     if (cl->lastUsercmd.forwardmove != 0 || cl->lastUsercmd.rightmove != 0) {
         isMovingWhileShooting = qtrue;
     }
-    
     if (isMovingWhileShooting && dist > cvars.moving_hs_dist) {
         if (hitLocation == HITLOC_HEAD || hitLocation == HITLOC_HELMET || hitLocation == HITLOC_NECK) {
             pData[id].movingHeadshotCount++;
-            
             if (pData[id].movingHeadshotCount >= cvars.moving_hs_streak && (now - pData[id].lastMovingHsTime) <= cvars.moving_hs_window) {
                 pData[id].acScore += 25;
                 snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aimbot");
@@ -1777,7 +1749,6 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
     } else {
         pData[id].movingHeadshotCount = 0;
     }
-
     if (dist > cvars.silent_aim_dist) {
         float ay = ShortToAngle(cl->lastUsercmd.angles[1]);
         float ap = ShortToAngle(cl->lastUsercmd.angles[0]); if (ap > 180.0f) ap -= 360.0f;
@@ -1806,7 +1777,6 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
     } else {
         pData[id].perfectShots = 0;
     }
-    
     if (pData[id].perfectShots >= cvars.perfect_shots && now - pData[id].lastPerfectShotTime > 60.0f) {
         pData[id].acScore += 20; 
         snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Aim Assist");
@@ -1814,7 +1784,6 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
         AC_Log(AC_va("[DET] Soft Aimbot | %d perfect hitbox center shots | P: %s", pData[id].perfectShots, cl->name));
         pData[id].perfectShots = 0;
     }
-    
     qboolean ads = (cl->lastUsercmd.buttons & 256) ? qtrue : qfalse;
     if (!ads && dist > cvars.hipfire_dist) {
         if (pData[id].hipfireLongKills > 0 && now - pData[id].lastHipfireKillTime > 10.0f) pData[id].hipfireLongKills = 0;
@@ -1828,68 +1797,56 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
             pData[id].hipfireLongKills = 0;
         }
     }
-
     qboolean isBulletMod = (meansOfDeath == MOD_PISTOL_BULLET || meansOfDeath == MOD_RIFLE_BULLET || meansOfDeath == MOD_HEAD_SHOT);
-    
     if (isBulletMod && dist > 600.0f && pData[id].hasShotData) {
         if ((now - pData[id].lastShotTime) <= 2.0f) {
-            
             qboolean wasADS = pData[id].lastShotADS;
-            
             float threshold;
             if (wasADS) {
                 threshold = cvars.silent_aim_threshold_ads;
             } else {
                 threshold = cvars.silent_aim_threshold_hipfire;
             }
-            
             vec3_t attackerOrigin;
             attackerOrigin[0] = pData[id].lastShotOrigin[0];
             attackerOrigin[1] = pData[id].lastShotOrigin[1];
-            
             float eyeHeight = 55.0f;
             if (cl->gentity->client) {
                 eyeHeight = cl->gentity->client->ps.viewHeightCurrent;
                 if (eyeHeight < 10.0f) eyeHeight = 55.0f;
             }
             attackerOrigin[2] = pData[id].lastShotOrigin[2] + eyeHeight;
-            
             vec3_t victimOrigin;
             victimOrigin[0] = self->r.currentOrigin[0];
             victimOrigin[1] = self->r.currentOrigin[1];
-            
             float victimEyeHeight = 55.0f;
             if (self->client) {
                 victimEyeHeight = self->client->ps.viewHeightCurrent;
                 if (victimEyeHeight < 10.0f) victimEyeHeight = 55.0f;
             }
             victimOrigin[2] = self->r.currentOrigin[2] + victimEyeHeight;
-            
             vec3_t attackerAngles;
             attackerAngles[0] = pData[id].lastShotAngles[0];
             attackerAngles[1] = pData[id].lastShotAngles[1];
             attackerAngles[2] = 0.0f;
-            
             vec3_t forward;
             AngleVectors(attackerAngles, forward);
-            
             vec3_t dirToTarget;
             VectorSubtract(victimOrigin, attackerOrigin, dirToTarget);
             VectorNormalize(dirToTarget, dirToTarget);
-            
             float dot = DotProduct(forward, dirToTarget);
-            
+            if (dist >= cvars.esp_min_dist && dist <= cvars.esp_max_dist && dot < 0.80f) {
+                pData[id].espWallbangKills++;
+            }
             if (dot < threshold) {
                 pData[id].silentAimCount++;
-                
                 if (now - pData[id].lastSilentAimTime > 30.0f) {
                     pData[id].silentAimCount = 1;
                 }
                 pData[id].lastSilentAimTime = now;
-                
                 if (pData[id].silentAimCount >= cvars.silent_aim_streak) {
                     pData[id].acScore += 20;
-                    snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "Silent Aim (Redirection)");
+                    snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: Silent Aim");
                     pData[id].lastScoreUpdate = now;
                     AC_Log(AC_va("[DET] Silent Aim | %d impossible hits (Dot: %.3f, Threshold: %.2f, %s, Dist: %.0f) | P: %s", 
                         pData[id].silentAimCount, dot, threshold, wasADS ? "ADS" : "Hipfire", dist, cl->name));
@@ -1897,18 +1854,14 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
                 }
             }
         }
-        
         pData[id].hasShotData = qfalse;
     }
-
     qboolean isSpreadWeapon = (meansOfDeath == MOD_RIFLE_BULLET || meansOfDeath == MOD_PISTOL_BULLET);
     qboolean isADS_Current = (cl->lastUsercmd.buttons & 256) ? qtrue : qfalse;
     qboolean suspiciousCondition = (dist > 600.0f && (!isADS_Current || isMovingWhileShooting));
-    
     if (isSpreadWeapon && suspiciousCondition) {
         VectorCopy(self->r.currentOrigin, pData[id].lastHitPositions[pData[id].hitPosIndex]);
         pData[id].hitPosIndex = (pData[id].hitPosIndex + 1) % 5;
-        
         if (now - pData[id].lastNoSpreadHitTime < 1.5f) {
             float maxDeviation = 0.0f;
             for (int i = 0; i < 4; i++) {
@@ -1921,12 +1874,11 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
                     if (d > maxDeviation) maxDeviation = d;
                 }
             }
-            
             if (maxDeviation < cvars.nospread_max_deviation) {
                 pData[id].noSpreadHitCount++;
                 if (pData[id].noSpreadHitCount >= cvars.nospread_streak) {
                     pData[id].acScore += 25;
-                    snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "No-Spread (Impossible Accuracy)");
+                    snprintf(pData[id].lastReason, sizeof(pData[id].lastReason), "NS | Auto Detection: No-Spread");
                     pData[id].lastScoreUpdate = now;
                     AC_Log(AC_va("[DET] No-Spread | %d hits within %.1f units at %.0f range | P: %s", 
                         pData[id].noSpreadHitCount, maxDeviation, dist, cl->name));
@@ -1940,7 +1892,6 @@ PCL void OnPlayerKilled(gentity_t* self, gentity_t* inflictor, gentity_t* attack
     } else {
         pData[id].noSpreadHitCount = 0;
     }
-    
     if (pData[id].acScore >= cvars.score_ban && !pData[id].pendingBan) {
         pData[id].pendingBan = qtrue;
         snprintf(pData[id].pendingReason, sizeof(pData[id].pendingReason), "%s", pData[id].lastReason[0] ? pData[id].lastReason : "Nektum Shield: You've been banned from this server.");
@@ -1962,11 +1913,11 @@ PCL void OnFrame(void) {
     if (activeWebhookRequest) {
         Plugin_HTTP_SendReceiveData(activeWebhookRequest);
         if (activeWebhookRequest->complete) {
-            Plugin_HTTP_FreeObj(activeWebhookRequest); activeWebhookRequest = NULL;
-        } 
-        else if (Plugin_Milliseconds() - webhookStartTime > 10000)
-        {
             Plugin_HTTP_FreeObj(activeWebhookRequest); 
+            activeWebhookRequest = NULL;
+        }
+        else if (Plugin_Milliseconds() - webhookStartTime > 10000) {
+            Plugin_HTTP_FreeObj(activeWebhookRequest);
             activeWebhookRequest = NULL;
         }
     }
@@ -1978,7 +1929,6 @@ PCL void OnFrame(void) {
         discordQueueHead = (discordQueueHead + 1) % MAX_DISCORD_QUEUE;
         discordQueueCount--;
     }
-    
     level_locals_t* level = Plugin_GetLevelBase();
     if (!level) return;
     int mc = level->maxclients;
@@ -1989,37 +1939,139 @@ PCL void OnFrame(void) {
         if (pData[i].pendingBan && pData[i].scheduledDropTime == 0) {
             if (cl && !IsBot(cl)) {
                 Plugin_SetStat(i, STAT_CHEATER_MARK, 1);
-                uint64_t pid = cl->playerid, sid = cl->steamid;
-                netadr_t adr = cl->netchan.remoteAddress;
-                char ib[64]; Plugin_NET_AdrToStringMT(&adr, ib, sizeof(ib));
-                char subnet[20]; GetSubnet24(ib, subnet, sizeof(subnet));
-                char cn[64]; StripColorCodes(cl->name, cn, sizeof(cn));
-                if (cn[0] == '\0') snprintf(cn, sizeof(cn), "%s", cl->name);
-                qboolean isCGNAT = IsCGNAT(ib);
-                if (isCGNAT) {
-                    NS_AddBan(pid, sid, cn, "", pData[i].pendingReason, "Nektum Shield Detection");
-                    AC_Log(AC_va("[CGNAT AUTO BAN] IP: %s | PID: %llu | Reason: %s | P: %s", ib, (unsigned long long)pid, pData[i].pendingReason, cl->name));
-                } else {
-                    NS_AddBan(pid, sid, cn, subnet, pData[i].pendingReason, "Nektum Shield Detection");
-                    AC_Log(AC_va("[AUTO BAN] IP: %s | Subnet: %s | PID: %llu | Reason: %s | P: %s", ib, subnet, (unsigned long long)pid, pData[i].pendingReason, cl->name));
-                }
             }
             pData[i].scheduledDropTime = now + cvars.drop_delay_ms;
             snprintf(pData[i].dropReason, sizeof(pData[i].dropReason), "%s", pData[i].pendingReason);
             pData[i].pendingBan = qfalse;
         }
+        
         if (pData[i].scheduledDropTime > 0 && now >= pData[i].scheduledDropTime) {
-            Plugin_DropClient(i, AC_va("You've been banned from this server.\nReason: %s\nAppeal on discord.", pData[i].dropReason));
             pData[i].scheduledDropTime = 0;
+            
+            if (!cl || !cl->gentity || IsBot(cl) || cl->state < CS_CONNECTED) {
+                memset(&pData[i], 0, sizeof(pData[i]));
+                continue;
+            }
+
+            uint64_t pid = cl->playerid, sid = cl->steamid;
+            netadr_t adr = cl->netchan.remoteAddress;
+            char ib[64]; Plugin_NET_AdrToStringMT(&adr, ib, sizeof(ib));
+            char subnet[20]; GetSubnet24(ib, subnet, sizeof(subnet));
+            char cn[64]; StripColorCodes(cl->name, cn, sizeof(cn));
+            if (cn[0] == '\0') snprintf(cn, sizeof(cn), "%s", cl->name);
+            qboolean isCGNAT = IsCGNAT(ib);
+            if (isCGNAT) {
+                NS_AddBan(pid, sid, cn, "", pData[i].pendingReason, "Nektum Shield Detection");
+                AC_Log(AC_va("[CGNAT AUTO BAN] IP: %s | PID: %llu | Reason: %s | P: %s", ib, (unsigned long long)pid, pData[i].pendingReason, cl->name));
+            } else {
+                NS_AddBan(pid, sid, cn, subnet, pData[i].pendingReason, "Nektum Shield Detection");
+                AC_Log(AC_va("[AUTO BAN] IP: %s | Subnet: %s | PID: %llu | Reason: %s | P: %s", ib, subnet, (unsigned long long)pid, pData[i].pendingReason, cl->name));
+            }
+            Plugin_DropClient(i, AC_va("You've been banned from this server.\nReason: %s\nAppeal on discord.", pData[i].dropReason));
             continue;
         }
     }
 }
 
+void CheckESPBehavior(int id, client_t** cls, int mc, float now) {
+    client_t* cl = cls[id];
+    if (!cl || !cl->gentity || !cl->gentity->client) return;
+    gclient_t* gcl = cl->gentity->client;
+    if (gcl->sess.sessionState != STATE_PLAYING) return;
+    if (gcl->sess.cs.team == TEAM_SPECTATOR || gcl->sess.cs.team == TEAM_FREE) return;
+
+    vec3_t playerForward, playerOrigin;
+    AngleVectors(gcl->ps.viewangles, playerForward);
+    VectorCopy(cl->gentity->r.currentOrigin, playerOrigin);
+
+    int blindTrackHits = 0;
+    int preAimHits = 0;
+    int sixthSenseHits = 0;
+    int validEnemies = 0;
+
+    for (int j = 0; j < mc; j++) {
+        if (id == j) continue;
+        client_t* enemy = cls[j];
+        if (!enemy || !enemy->gentity || !enemy->gentity->client) continue;
+        gclient_t* egcl = enemy->gentity->client;
+        if (egcl->sess.sessionState != STATE_PLAYING) continue;
+        if (gcl->sess.cs.team == egcl->sess.cs.team) continue;
+
+        vec3_t diff;
+        VectorSubtract(enemy->gentity->r.currentOrigin, playerOrigin, diff);
+        float dist = VectorLength(diff);
+        vec3_t dirToEnemy;
+        VectorNormalize(diff, dirToEnemy);
+        float dot = DotProduct(playerForward, dirToEnemy);
+
+        if (dot > 0.30f && dist < cvars.esp_seen_dist) {
+            pData[id].enemyLastSeenTime[j] = now;
+        }
+
+        float timeSinceSeen = now - pData[id].enemyLastSeenTime[j];
+        qboolean isLikelyOccluded = (timeSinceSeen > cvars.esp_occlusion_time && dist > cvars.esp_occlusion_dist);
+
+        if (isLikelyOccluded && dist > cvars.esp_occlusion_dist) {
+            if (dot > 0.90f && !pData[id].wasFiring) {
+                pData[id].espScore += 6;
+            }
+        }
+
+        if (dist >= cvars.esp_min_dist && dist <= cvars.esp_max_dist) {
+            validEnemies++;
+            
+            // Relaxed Blind Track condition (0.95 -> 0.85)
+            if (dot > 0.85f && !pData[id].wasFiring && isLikelyOccluded) {
+                blindTrackHits++;
+            }
+
+            float expectedPitch = -atan2f(diff[2], sqrtf(diff[0]*diff[0] + diff[1]*diff[1])) * (180.0f / (float)M_PI);
+            float actualPitch = gcl->ps.viewangles[0];
+            if (actualPitch > 180.0f) actualPitch -= 360.0f;
+            if (fabsf(actualPitch - expectedPitch) < 4.0f && dot > 0.80f && isLikelyOccluded) {
+                preAimHits++;
+            }
+        }
+
+        if (pData[id].lastLargeSnapTime > 0 && (now - pData[id].lastLargeSnapTime) < 1.5f) {
+            float snapDot = DotProduct(pData[id].largeSnapForward, dirToEnemy);
+            if (snapDot > 0.90f && isLikelyOccluded) {
+                sixthSenseHits++;
+            }
+        }
+    }
+
+    if (pData[id].lastLargeSnapTime > 0 && (now - pData[id].lastLargeSnapTime) > 1.5f) {
+        pData[id].lastLargeSnapTime = 0.0f;
+    }
+
+    if (validEnemies > 0) {
+        pData[id].espScore += (blindTrackHits * 5) + (preAimHits * 8) + (sixthSenseHits * 15);
+    }
+
+    if (pData[id].espWallbangKills > 3) {
+        pData[id].espScore += 3; 
+    }
+
+    pData[id].espScore -= cvars.esp_score_decay;
+    if (pData[id].espScore < 0) pData[id].espScore = 0;
+
+    if (pData[id].espScore >= cvars.esp_warn_threshold && (now - pData[id].lastEspWarningTime) > 60.0f) {
+        pData[id].lastEspWarningTime = now;
+        pData[id].isSuspect = qtrue;
+        Plugin_Printf("^1[Nektum Shield] ^3*** SUSPECT *** %s flagged for potential ESP/Wallhack (Score: %d)\n", cl->name, pData[id].espScore);
+        AC_Log(AC_va("[SUSPECT] ESP/Wallhack User | P: %s | Score: %d | BlindTrack: %d | PreAim: %d | Wallbang: %d | SixthSense: %d", 
+            cl->name, pData[id].espScore, pData[id].espBlindTrackFrames, pData[id].espPreAimFrames, pData[id].espWallbangKills, pData[id].espSixthSenseSnaps));
+    }
+
+    pData[id].espBlindTrackFrames += blindTrackHits;
+    pData[id].espPreAimFrames += preAimHits;
+    pData[id].espSixthSenseSnaps += sixthSenseHits;
+}
+
 PCL void OnOneSecond(void) {
     level_locals_t* level = Plugin_GetLevelBase();
     if (!level || !level->clients || !level->gentities) return;
-    
     cvars.score_ban = Plugin_Cvar_GetInteger(cv_score_ban);
     cvars.hs_ratio = Plugin_Cvar_GetValue(cv_hs_ratio);
     cvars.min_kills = Plugin_Cvar_GetInteger(cv_min_kills);
@@ -2039,18 +2091,15 @@ PCL void OnOneSecond(void) {
     cvars.alttab_move_time = Plugin_Cvar_GetValue(cv_alttab_move_time);
     cvars.drop_delay_ms = Plugin_Cvar_GetInteger(cv_drop_delay_ms);
     cvars.name_check_delay = Plugin_Cvar_GetInteger(cv_name_check_delay);
-    
     cvars.time_hs_streak = Plugin_Cvar_GetInteger(cv_time_hs_streak);
     cvars.time_hs_window = Plugin_Cvar_GetValue(cv_time_hs_window);
     cvars.time_bl_streak = Plugin_Cvar_GetInteger(cv_time_bl_streak);
     cvars.time_bl_window = Plugin_Cvar_GetValue(cv_time_bl_window);
     cvars.snap_kill_angle = Plugin_Cvar_GetValue(cv_snap_kill_angle);
     cvars.snap_kill_window = Plugin_Cvar_GetValue(cv_snap_kill_window);
-    
     cvars.moving_hs_dist = Plugin_Cvar_GetValue(cv_moving_hs_dist);
     cvars.moving_hs_streak = Plugin_Cvar_GetInteger(cv_moving_hs_streak);
     cvars.moving_hs_window = Plugin_Cvar_GetValue(cv_moving_hs_window);
-
     cvars.macro_logic_clicks = Plugin_Cvar_GetInteger(cv_macro_logic_clicks);
     cvars.macro_logic_window = Plugin_Cvar_GetInteger(cv_macro_logic_window);
     cvars.macro_logic_strikes = Plugin_Cvar_GetValue(cv_macro_logic_strikes);
@@ -2061,18 +2110,24 @@ PCL void OnOneSecond(void) {
     cvars.macro_rate_fast = Plugin_Cvar_GetInteger(cv_macro_rate_fast);
     cvars.macro_consistency_count = Plugin_Cvar_GetInteger(cv_macro_consistency_count);
     cvars.macro_consistency_gap = Plugin_Cvar_GetInteger(cv_macro_consistency_gap);
-
     cvars.silent_aim_threshold_hipfire = Plugin_Cvar_GetValue(cv_silent_aim_threshold_hipfire);
     cvars.silent_aim_threshold_ads = Plugin_Cvar_GetValue(cv_silent_aim_threshold_ads);
     cvars.silent_aim_streak = Plugin_Cvar_GetInteger(cv_silent_aim_streak);
     cvars.ads_norecoil_frames = Plugin_Cvar_GetInteger(cv_ads_norecoil_frames);
-
     cvars.nospread_max_deviation = Plugin_Cvar_GetValue(cv_nospread_max_deviation);
     cvars.nospread_streak = Plugin_Cvar_GetInteger(cv_nospread_streak);
     cvars.target_switch_time = Plugin_Cvar_GetValue(cv_target_switch_time);
     cvars.target_switch_angle = Plugin_Cvar_GetValue(cv_target_switch_angle);
     cvars.target_switch_streak = Plugin_Cvar_GetInteger(cv_target_switch_streak);
     
+    cvars.esp_warn_threshold = Plugin_Cvar_GetInteger(cv_esp_warn_threshold);
+    cvars.esp_min_dist = Plugin_Cvar_GetValue(cv_esp_min_dist);
+    cvars.esp_max_dist = Plugin_Cvar_GetValue(cv_esp_max_dist);
+    cvars.esp_occlusion_time = Plugin_Cvar_GetValue(cv_esp_occlusion_time);
+    cvars.esp_occlusion_dist = Plugin_Cvar_GetValue(cv_esp_occlusion_dist);
+    cvars.esp_seen_dist = Plugin_Cvar_GetValue(cv_esp_seen_dist);
+    cvars.esp_score_decay = Plugin_Cvar_GetInteger(cv_esp_score_decay);
+
     float now = level->time / 1000.0f;
     int mc = level->maxclients;
     if (mc <= 0 || mc > MAXP) mc = MAXP;
@@ -2083,12 +2138,14 @@ PCL void OnOneSecond(void) {
         client_t* cl = cls[i];
         if (!cl || !cl->gentity || !cl->gentity->client) continue;
         gclient_t* gcl = cl->gentity->client;
-        if (gcl->sess.sessionState != STATE_PLAYING) continue;
+        if (!gcl || gcl->sess.sessionState != STATE_PLAYING) continue;
         if (pData[i].acScore > 0 && now - pData[i].lastScoreUpdate > 15.0f) {
             pData[i].acScore -= 2;
             if (pData[i].acScore < 0) pData[i].acScore = 0;
             pData[i].lastScoreUpdate = now;
         }
+        
+        CheckESPBehavior(i, cls, mc, now);
     }
     for (int i = 0; i < mc; i++) {
         if (pData[i].pendingNameCheck && pData[i].nameCheckStartTime > 0) {
@@ -2115,7 +2172,6 @@ PCL int OnInit(void) {
     Plugin_AddCommand("fu", Cmd_NS_FindUser, 80);
     Plugin_AddCommand("mute", Cmd_NS_Mute, 60);
     Plugin_AddCommand("unmute", Cmd_NS_Unmute, 60);
-
     cv_score_ban = Plugin_Cvar_RegisterInt("ac_score_ban", 30, 10, 100, 0, "Ban threshold");
     cv_min_kills = Plugin_Cvar_RegisterInt("ac_min_kills", 40, 5, 200, 0, "Min kills for HS check");
     cv_body_lock_streak = Plugin_Cvar_RegisterInt("ac_body_lock_streak", 15, 3, 20, 0, "Same hit location streak");
@@ -2124,51 +2180,52 @@ PCL int OnInit(void) {
     cv_recoil_samples = Plugin_Cvar_RegisterInt("ac_recoil_samples", 7, 5, 30, 0, "Recoil minimum samples");
     cv_drop_delay_ms = Plugin_Cvar_RegisterInt("ac_drop_delay_ms", 5000, 1000, 30000, 0, "Ban kick delay (ms)");
     cv_name_check_delay = Plugin_Cvar_RegisterInt("ac_name_check_delay", 3, 1, 10, 0, "Name theft check delay (sec)");
-
     cv_hs_ratio = Plugin_Cvar_RegisterFloat("ac_hs_ratio", 0.8f, 0.1f, 1.0f, 0, "Max HS ratio");
-    cv_snap_threshold = Plugin_Cvar_RegisterFloat("ac_snap_threshold", 150.0f, 50.0f, 180.0f, 0, "Snap aimbot angle");
+    cv_snap_threshold = Plugin_Cvar_RegisterFloat("ac_snap_threshold", 175.0f, 50.0f, 180.0f, 0, "Snap aimbot angle");
     cv_silent_aim_angle = Plugin_Cvar_RegisterFloat("ac_silent_aim_angle", 3.5f, 1.0f, 45.0f, 0, "Silent aim angle threshold");
     cv_silent_aim_dist = Plugin_Cvar_RegisterFloat("ac_silent_aim_dist", 500.0f, 400.0f, 2000.0f, 0, "Silent aim min distance");
     cv_perfect_yaw_pitch = Plugin_Cvar_RegisterFloat("ac_perfect_yaw_pitch", 2.5f, 1.0f, 10.0f, 0, "Perfect shot yaw/pitch");
     cv_hipfire_dist = Plugin_Cvar_RegisterFloat("ac_hipfire_dist", 4000.0f, 1000.0f, 8000.0f, 0, "Hipfire distance threshold");
     cv_norecoil_threshold = Plugin_Cvar_RegisterFloat("ac_norecoil_threshold", 0.998f, 0.99f, 1.0f, 0, "No recoil threshold");
-    cv_recoil_macro_var = Plugin_Cvar_RegisterFloat("ac_recoil_macro_var", 0.3f, 0.05f, 1.0f, 0, "No-recoil macro variance");
-    cv_recoil_macro_mean = Plugin_Cvar_RegisterFloat("ac_recoil_macro_mean", -1.0f, -5.0f, 0.0f, 0, "No-recoil macro mean pitch");
-    cv_alttab_move_dist = Plugin_Cvar_RegisterFloat("ac_alttab_move_dist", 80.0f, 1.0f, 80.0f, 0, "Alt-Tab movement distance");
-    cv_alttab_move_time = Plugin_Cvar_RegisterFloat("ac_alttab_move_time", 15.0f, 0.5f, 15.0f, 0, "Alt-Tab movement time (sec)");
-    
+    cv_recoil_macro_var = Plugin_Cvar_RegisterFloat("ac_recoil_macro_var", 0.1f, 0.05f, 1.0f, 0, "No-recoil macro variance");
+    cv_recoil_macro_mean = Plugin_Cvar_RegisterFloat("ac_recoil_macro_mean", -0.5f, -5.0f, 0.0f, 0, "No-recoil macro mean pitch");
+    cv_alttab_move_dist = Plugin_Cvar_RegisterFloat("ac_alttab_move_dist", 300.0f, 150.0f, 400.0f, 0, "Alt-Tab movement distance");
+    cv_alttab_move_time = Plugin_Cvar_RegisterFloat("ac_alttab_move_time", 25.0f, 10.0f, 40.0f, 0, "Alt-Tab movement time (sec)");
     cv_time_hs_streak = Plugin_Cvar_RegisterInt("ac_time_hs_streak", 6, 3, 20, 0, "Time-based HS streak limit");
     cv_time_hs_window = Plugin_Cvar_RegisterFloat("ac_time_hs_window", 10.0f, 2.0f, 30.0f, 0, "Time window for HS streak (seconds)");
     cv_time_bl_streak = Plugin_Cvar_RegisterInt("ac_time_bl_streak", 10, 3, 20, 0, "Time-based BL streak limit");
     cv_time_bl_window = Plugin_Cvar_RegisterFloat("ac_time_bl_window", 10.0f, 2.0f, 30.0f, 0, "Time window for BL streak (seconds)");
     cv_snap_kill_angle = Plugin_Cvar_RegisterFloat("ac_snap_kill_angle", 70.0f, 20.0f, 150.0f, 0, "Snap angle to track for follow-up kill");
     cv_snap_kill_window = Plugin_Cvar_RegisterFloat("ac_snap_kill_window", 1.0f, 0.5f, 5.0f, 0, "Time window for snap + kill (seconds)");
-    
     cv_moving_hs_dist = Plugin_Cvar_RegisterFloat("ac_moving_hs_dist", 1500.0f, 500.0f, 5000.0f, 0, "Min distance for moving HS detection");
     cv_moving_hs_streak = Plugin_Cvar_RegisterInt("ac_moving_hs_streak", 5, 3, 15, 0, "Consecutive moving headshots to flag");
     cv_moving_hs_window = Plugin_Cvar_RegisterFloat("ac_moving_hs_window", 15.0f, 5.0f, 30.0f, 0, "Time window for moving HS streak (seconds)");
-
     cv_macro_logic_clicks = Plugin_Cvar_RegisterInt("ac_macro_logic_clicks", 5, 3, 20, 0, "Logic: clicks per window to trigger");
     cv_macro_logic_window = Plugin_Cvar_RegisterInt("ac_macro_logic_window", 300, 100, 1000, 0, "Logic: time window (ms)");
     cv_macro_logic_strikes = Plugin_Cvar_RegisterFloat("ac_macro_logic_strikes", 3.0f, 1.0f, 15.0f, 0, "Logic: strikes before ban score");
     cv_macro_scroll_count = Plugin_Cvar_RegisterInt("ac_macro_scroll_count", 4, 2, 15, 0, "Scroll: consecutive fast clicks");
-    cv_macro_scroll_fast = Plugin_Cvar_RegisterInt("ac_macro_scroll_fast", 90, 30, 200, 0, "Scroll: fast click threshold (ms)");
-    cv_macro_scroll_reset = Plugin_Cvar_RegisterInt("ac_macro_scroll_reset", 150, 100, 300, 0, "Scroll: reset threshold (ms)");
+    cv_macro_scroll_fast = Plugin_Cvar_RegisterInt("ac_macro_scroll_fast", 60, 30, 200, 0, "Scroll: fast click threshold (ms)");
+    cv_macro_scroll_reset = Plugin_Cvar_RegisterInt("ac_macro_scroll_reset", 120, 100, 300, 0, "Scroll: reset threshold (ms)");
     cv_macro_rate_count = Plugin_Cvar_RegisterInt("ac_macro_rate_count", 7, 3, 20, 0, "Rate: consecutive fast clicks");
-    cv_macro_rate_fast = Plugin_Cvar_RegisterInt("ac_macro_rate_fast", 120, 50, 200, 0, "Rate: fast click threshold (ms)");
+    cv_macro_rate_fast = Plugin_Cvar_RegisterInt("ac_macro_rate_fast", 85, 50, 200, 0, "Rate: fast click threshold (ms)");
     cv_macro_consistency_count = Plugin_Cvar_RegisterInt("ac_macro_consistency_count", 5, 3, 20, 0, "Consistency: matching gaps to trigger");
-    cv_macro_consistency_gap = Plugin_Cvar_RegisterInt("ac_macro_consistency_gap", 150, 50, 300, 0, "Consistency: max gap to consider (ms)");
-
-    cv_silent_aim_threshold_hipfire = Plugin_Cvar_RegisterFloat("ac_silent_aim_threshold_hipfire", 0.40f, 0.10f, 0.99f, 0, "Silent Aim: Hipfire max dot product");
-    cv_silent_aim_threshold_ads = Plugin_Cvar_RegisterFloat("ac_silent_aim_threshold_ads", 0.85f, 0.50f, 0.99f, 0, "Silent Aim: ADS max dot product");
+    cv_macro_consistency_gap = Plugin_Cvar_RegisterInt("ac_macro_consistency_gap", 120, 50, 300, 0, "Consistency: max gap to consider (ms)");
+    cv_silent_aim_threshold_hipfire = Plugin_Cvar_RegisterFloat("ac_silent_aim_threshold_hipfire", 0.30f, 0.10f, 0.99f, 0, "Silent Aim: Hipfire max dot product");
+    cv_silent_aim_threshold_ads = Plugin_Cvar_RegisterFloat("ac_silent_aim_threshold_ads", 0.80f, 0.50f, 0.99f, 0, "Silent Aim: ADS max dot product");
     cv_silent_aim_streak = Plugin_Cvar_RegisterInt("ac_silent_aim_streak", 4, 2, 10, 0, "Silent Aim: Impossible hits to trigger ban");
-    cv_ads_norecoil_frames = Plugin_Cvar_RegisterInt("ac_ads_norecoil_frames", 130, 50, 150, 0, "No-Recoil: ADS zero-move frames to trigger (50fps)");
-
-    cv_nospread_max_deviation = Plugin_Cvar_RegisterFloat("ac_nospread_max_deviation", 20.0f, 10.0f, 50.0f, 0, "No-Spread: Max deviation between consecutive hits");
+    cv_ads_norecoil_frames = Plugin_Cvar_RegisterInt("ac_ads_norecoil_frames", 500, 50, 500, 0, "No-Recoil: ADS zero-move frames to trigger (50fps)");
+    cv_nospread_max_deviation = Plugin_Cvar_RegisterFloat("ac_nospread_max_deviation", 50.0f, 10.0f, 50.0f, 0, "No-Spread: Max deviation between consecutive hits");
     cv_nospread_streak = Plugin_Cvar_RegisterInt("ac_nospread_streak", 4, 3, 8, 0, "No-Spread: Consecutive hits to trigger");
-    cv_target_switch_time = Plugin_Cvar_RegisterFloat("ac_target_switch_time", 0.15f, 0.10f, 0.40f, 0, "Target Switch: Max time between 2 kills (seconds)");
-    cv_target_switch_angle = Plugin_Cvar_RegisterFloat("ac_target_switch_angle", 70.0f, 30.0f, 90.0f, 0, "Target Switch: Min angle between 2 victims");
+    cv_target_switch_time = Plugin_Cvar_RegisterFloat("ac_target_switch_time", 0.12f, 0.10f, 0.40f, 0, "Target Switch: Max time between 2 kills (seconds)");
+    cv_target_switch_angle = Plugin_Cvar_RegisterFloat("ac_target_switch_angle", 90.0f, 30.0f, 120.0f, 0, "Target Switch: Min CAMERA turn angle between 2 victims");
     cv_target_switch_streak = Plugin_Cvar_RegisterInt("ac_target_switch_streak", 3, 2, 5, 0, "Target Switch: Consecutive impossible switches");
+    cv_esp_warn_threshold = Plugin_Cvar_RegisterInt("ac_esp_warn_threshold", 10, 10, 500, 0, "ESP Suspect Score Threshold");
+    cv_esp_min_dist = Plugin_Cvar_RegisterFloat("ac_esp_min_dist", 100.0f, 50.0f, 4000.0f, 0, "ESP Min Distance");
+    cv_esp_max_dist = Plugin_Cvar_RegisterFloat("ac_esp_max_dist", 40000.0f, 2000.0f, 45000.0f, 0, "ESP Max Distance");
+    cv_esp_occlusion_time = Plugin_Cvar_RegisterFloat("ac_esp_occlusion_time", 0.8f, 0.1f, 10.0f, 0, "Seconds before enemy is considered occluded");
+    cv_esp_occlusion_dist = Plugin_Cvar_RegisterFloat("ac_esp_occlusion_dist", 1500.0f, 50.0f, 2000.0f, 0, "Min distance for occlusion check");
+    cv_esp_seen_dist = Plugin_Cvar_RegisterFloat("ac_esp_seen_dist", 15000.0f, 5000.0f, 40000.0f, 0, "Distance to consider enemy seen");
+    cv_esp_score_decay = Plugin_Cvar_RegisterInt("ac_esp_score_decay", 0.01, 0, 1, 0, "ESP score decay per second");
 
     cvars.score_ban = Plugin_Cvar_GetInteger(cv_score_ban);
     cvars.hs_ratio = Plugin_Cvar_GetValue(cv_hs_ratio);
@@ -2189,18 +2246,15 @@ PCL int OnInit(void) {
     cvars.alttab_move_time = Plugin_Cvar_GetValue(cv_alttab_move_time);
     cvars.drop_delay_ms = Plugin_Cvar_GetInteger(cv_drop_delay_ms);
     cvars.name_check_delay = Plugin_Cvar_GetInteger(cv_name_check_delay);
-    
     cvars.time_hs_streak = Plugin_Cvar_GetInteger(cv_time_hs_streak);
     cvars.time_hs_window = Plugin_Cvar_GetValue(cv_time_hs_window);
     cvars.time_bl_streak = Plugin_Cvar_GetInteger(cv_time_bl_streak);
     cvars.time_bl_window = Plugin_Cvar_GetValue(cv_time_bl_window);
     cvars.snap_kill_angle = Plugin_Cvar_GetValue(cv_snap_kill_angle);
     cvars.snap_kill_window = Plugin_Cvar_GetValue(cv_snap_kill_window);
-    
     cvars.moving_hs_dist = Plugin_Cvar_GetValue(cv_moving_hs_dist);
     cvars.moving_hs_streak = Plugin_Cvar_GetInteger(cv_moving_hs_streak);
     cvars.moving_hs_window = Plugin_Cvar_GetValue(cv_moving_hs_window);
-
     cvars.macro_logic_clicks = Plugin_Cvar_GetInteger(cv_macro_logic_clicks);
     cvars.macro_logic_window = Plugin_Cvar_GetInteger(cv_macro_logic_window);
     cvars.macro_logic_strikes = Plugin_Cvar_GetValue(cv_macro_logic_strikes);
@@ -2211,32 +2265,40 @@ PCL int OnInit(void) {
     cvars.macro_rate_fast = Plugin_Cvar_GetInteger(cv_macro_rate_fast);
     cvars.macro_consistency_count = Plugin_Cvar_GetInteger(cv_macro_consistency_count);
     cvars.macro_consistency_gap = Plugin_Cvar_GetInteger(cv_macro_consistency_gap);
-
     cvars.silent_aim_threshold_hipfire = Plugin_Cvar_GetValue(cv_silent_aim_threshold_hipfire);
     cvars.silent_aim_threshold_ads = Plugin_Cvar_GetValue(cv_silent_aim_threshold_ads);
     cvars.silent_aim_streak = Plugin_Cvar_GetInteger(cv_silent_aim_streak);
     cvars.ads_norecoil_frames = Plugin_Cvar_GetInteger(cv_ads_norecoil_frames);
-
     cvars.nospread_max_deviation = Plugin_Cvar_GetValue(cv_nospread_max_deviation);
     cvars.nospread_streak = Plugin_Cvar_GetInteger(cv_nospread_streak);
     cvars.target_switch_time = Plugin_Cvar_GetValue(cv_target_switch_time);
     cvars.target_switch_angle = Plugin_Cvar_GetValue(cv_target_switch_angle);
     cvars.target_switch_streak = Plugin_Cvar_GetInteger(cv_target_switch_streak);
+    cvars.esp_warn_threshold = Plugin_Cvar_GetInteger(cv_esp_warn_threshold);
+    cvars.esp_min_dist = Plugin_Cvar_GetValue(cv_esp_min_dist);
+    cvars.esp_max_dist = Plugin_Cvar_GetValue(cv_esp_max_dist);
+    cvars.esp_occlusion_time = Plugin_Cvar_GetValue(cv_esp_occlusion_time);
+    cvars.esp_occlusion_dist = Plugin_Cvar_GetValue(cv_esp_occlusion_dist);
+    cvars.esp_seen_dist = Plugin_Cvar_GetValue(cv_esp_seen_dist);
+    cvars.esp_score_decay = Plugin_Cvar_GetInteger(cv_esp_score_decay);
 
-    Plugin_Printf("\n^2Nektum Shield has been started!\n");
+    Plugin_Printf("\nNektum Shield v3.2 has been started!\n");
     return 0;
 }
 
 PCL void OnInfoRequest(pluginInfo_t* info) {
     info->handlerVersion.major = PLUGIN_HANDLER_VERSION_MAJOR;
     info->handlerVersion.minor = PLUGIN_HANDLER_VERSION_MINOR;
-    info->pluginVersion.major = 2;
-    info->pluginVersion.minor = 8;
+    info->pluginVersion.major = 3;
+    info->pluginVersion.minor = 2;
     snprintf(info->fullName, sizeof(info->fullName), "Nektum Shield");
-    snprintf(info->shortDescription, sizeof(info->shortDescription), "COD4X Anti-Cheat & Identity Management");
+    snprintf(info->shortDescription, sizeof(info->shortDescription), "COD4X Anti-Cheat, Admin tool & Identity Management");
 }
 
 PCL void OnTerminate(void) {
-    if (activeWebhookRequest) { Plugin_HTTP_FreeObj(activeWebhookRequest); activeWebhookRequest = NULL; }
+    if (activeWebhookRequest) { 
+        Plugin_HTTP_FreeObj(activeWebhookRequest); 
+        activeWebhookRequest = NULL; 
+    }
     if (ac_log) { fclose(ac_log); ac_log = NULL; }
 }
