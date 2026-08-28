@@ -112,7 +112,7 @@ cd cod4x_anticheat
 make clean && make
 ```
 
-Output: build/anticheat.so
+## Output: build/anticheat.so
 
 ### Troubleshooting
 
