@@ -87,25 +87,34 @@ The plugin is 32‑bit (COD4X server requirement).
 - Cloning the repository
 
 ### Debian / Ubuntu
+
 `sudo dpkg --add-architecture i386`
+
 `sudo apt update`
+
 `sudo apt install gcc-multilib libc6-dev-i386`
+
 `cd cod4x_anticheat`
+
 `make clean && make`
 
 ### Fedora
 
 `sudo dnf install glibc-devel.i686 libgcc.i686`
+
 `cd cod4x_anticheat`
+
 `make clean && make`
 
 ### Arch
 
 `sudo pacman -S lib32-gcc-libs lib32-glibc`
+
 `cd cod4x_anticheat`
+
 `make clean && make`
 
-# Output: build/anticheat.so
+Output: build/anticheat.so
 
 ### Troubleshooting
 
@@ -119,9 +128,9 @@ Banlist not saved: Check write permissions in fs_homepath.
 
 ## Credits
 
-# Developer: XV9K / @sudoxv9k
+Developer: XV9K / @sudoxv9k
 
-# Platform: COD4X (https://cod4x.me)
+Platform: COD4X (https://cod4x.me)
 
 Disclaimer: Server‑side anti‑cheat sofwares are safe to use but does not provide 100% protection.
 Use alongside other security layers. With using this software you agree with the licensing.
