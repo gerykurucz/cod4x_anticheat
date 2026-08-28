@@ -88,31 +88,26 @@ The plugin is 32‑bit (COD4X server requirement).
 
 ### Debian / Ubuntu
 
-`sudo dpkg --add-architecture i386`
-
-`sudo apt update`
-
-`sudo apt install gcc-multilib libc6-dev-i386`
-
-`cd cod4x_anticheat`
-
-`make clean && make`
+```bash
+sudo dpkg --add-architecture i386
+sudo apt update
+sudo apt install gcc-multilib libc6-dev-i386
+cd cod4x_anticheat
+make clean && make```
 
 ### Fedora
 
-`sudo dnf install glibc-devel.i686 libgcc.i686`
-
-`cd cod4x_anticheat`
-
-`make clean && make`
+```bash
+sudo dnf install glibc-devel.i686 libgcc.i686
+cd cod4x_anticheat
+make clean && make```
 
 ### Arch
 
-`sudo pacman -S lib32-gcc-libs lib32-glibc`
-
-`cd cod4x_anticheat`
-
-`make clean && make`
+```bash
+sudo pacman -S lib32-gcc-libs lib32-glibc`
+cd cod4x_anticheat
+make clean && make```
 
 Output: build/anticheat.so
 
