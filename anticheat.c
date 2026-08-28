@@ -1,8 +1,8 @@
 /*
  * ============================================================
- *  Nektum Shield - COD4X Plugin
+ *  Nektum Shield - COD4X Anticheat Plugin
  *  Version: 3.2
- *  Developer: XV9K (@sudoxv9k)
+ *  Developer: XV9K (github.com/sudoxv9k)
  * ============================================================
  */
  
@@ -14,9 +14,6 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include "api/pinc.h"
-
-/* ========================= PLACE YOUR WEBHOOK URL HERE ========================= */
-#define WEBHOOK_URL "https://discord.com/api/webhooks/your_url"
 
 /* ========================= CONSTANTS ========================= */
 #define MAXP 64
@@ -250,6 +247,7 @@ static CONVAR_T *cv_esp_occlusion_time;
 static CONVAR_T *cv_esp_occlusion_dist;
 static CONVAR_T *cv_esp_seen_dist;
 static CONVAR_T *cv_esp_score_decay;
+static CONVAR_T *cv_webhook_url;
 
 typedef struct {
     int score_ban;
@@ -1921,14 +1919,34 @@ PCL void OnFrame(void) {
             activeWebhookRequest = NULL;
         }
     }
-    if (!activeWebhookRequest && discordQueueCount > 0) {
-        activeWebhookRequest = Plugin_HTTP_MakeHttpRequest(WEBHOOK_URL, "POST",
-            (byte*)discordQueue[discordQueueHead], (int)strlen(discordQueue[discordQueueHead]),
-            "Content-Type: application/json\r\n");
+
+    if (!activeWebhookRequest && discordQueueCount > 0)
+    {
+        static qboolean warnedNoWebhook = qfalse;
+        char webhookUrl[512];
+        Plugin_Cvar_GetString(cv_webhook_url, webhookUrl, sizeof(webhookUrl));
+
+        if (webhookUrl[0] != '\0')
+        {
+            activeWebhookRequest = Plugin_HTTP_MakeHttpRequest(webhookUrl, "POST",
+                (byte*)discordQueue[discordQueueHead], (int)strlen(discordQueue[discordQueueHead]),
+                "Content-Type: application/json\r\n");
+            warnedNoWebhook = qfalse;
+        }
+        else
+        {
+            if (!warnedNoWebhook)
+            {
+                Plugin_Printf("^3[Nektum Shield] ^7Discord webhook URL is not set (ns_webhook_url).\n");
+                warnedNoWebhook = qtrue;
+            }
+        }
+
         if (activeWebhookRequest) webhookStartTime = Plugin_Milliseconds();
         discordQueueHead = (discordQueueHead + 1) % MAX_DISCORD_QUEUE;
         discordQueueCount--;
     }
+
     level_locals_t* level = Plugin_GetLevelBase();
     if (!level) return;
     int mc = level->maxclients;
@@ -2226,6 +2244,8 @@ PCL int OnInit(void) {
     cv_esp_occlusion_dist = Plugin_Cvar_RegisterFloat("ac_esp_occlusion_dist", 1500.0f, 50.0f, 2000.0f, 0, "Min distance for occlusion check");
     cv_esp_seen_dist = Plugin_Cvar_RegisterFloat("ac_esp_seen_dist", 15000.0f, 5000.0f, 40000.0f, 0, "Distance to consider enemy seen");
     cv_esp_score_decay = Plugin_Cvar_RegisterInt("ac_esp_score_decay", 0.01, 0, 1, 0, "ESP score decay per second");
+    
+    cv_webhook_url = Plugin_Cvar_RegisterString("ns_webhook_url", "", 0, "Discord webhook URL for Nektum Shield logs");
 
     cvars.score_ban = Plugin_Cvar_GetInteger(cv_score_ban);
     cvars.hs_ratio = Plugin_Cvar_GetValue(cv_hs_ratio);

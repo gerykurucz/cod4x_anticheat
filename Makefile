@@ -1,8 +1,8 @@
 CC = gcc
 
-TARGET = build/nektumshield.so
+TARGET = build/anticheat.so
 
-SRCS = nektumshield.c
+SRCS = anticheat.c
 
 CFLAGS = -m32 -O3 -Wall -shared -fPIC
 
