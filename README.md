@@ -93,21 +93,21 @@ sudo dpkg --add-architecture i386
 sudo apt update
 sudo apt install gcc-multilib libc6-dev-i386
 cd cod4x_anticheat
-make clean && make```
+make clean && make`
 
 ### Fedora
 
 ```bash
 sudo dnf install glibc-devel.i686 libgcc.i686
 cd cod4x_anticheat
-make clean && make```
+make clean && make`
 
 ### Arch
 
 ```bash
 sudo pacman -S lib32-gcc-libs lib32-glibc`
 cd cod4x_anticheat
-make clean && make```
+make clean && make`
 
 Output: build/anticheat.so
 
