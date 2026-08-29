@@ -128,5 +128,4 @@ Developer: XV9K / @sudoxv9k
 Platform: COD4X (https://cod4x.ovh)
 
 Disclaimer: Server‑side anti‑cheat sofwares are safe to use but does not provide 100% protection.
-Use alongside other security layers. With using this software you agree with the licensing.
-https://github.com/sudoxv9k/cod4x_anticheat/blob/main/LICENSE
+Use alongside other security layers. By using this software you agree with the ([LICENSE](https://github.com/sudoxv9k/cod4x_anticheat/blob/main/LICENSE)).
