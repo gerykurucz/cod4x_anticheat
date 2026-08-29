@@ -1,8 +1,5 @@
 # Nektum Shield
-
-**Version:** 3.2  
-**Developer:** XV9K ([@sudoxv9k](https://github.com/sudoxv9k))  
-**Platform:** Call of Duty 4: Modern Warfare (COD4X server)
+**Version:** 3.2
 
 A comprehensive server‑side anti‑cheat and administration plugin for COD4X. It monitors player behavior in real time, detects cheats, manages bans, mutes, and persistent identities, and logs important events to Discord.
 
