@@ -4,7 +4,7 @@ import b3
 import b3.plugin
 
 
-__author__ = 'XV9K'
+__author__ = 'Gery Kurucz'
 __version__ = '1.0'
 
 
