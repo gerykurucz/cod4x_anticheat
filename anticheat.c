@@ -2,7 +2,8 @@
  * ============================================================
  *  Nektum Shield - COD4X Anticheat Plugin
  *  Version: 3.2
- *  Developer: XV9K (github.com/sudoxv9k)
+ *  Developer: Gery Kurucz (github.com/gerykurucz)
+ *  LICENSE: https://github.com/gerykurucz/cod4x_anticheat/blob/main/LICENSE
  * ============================================================
  */
  

@@ -12,8 +12,8 @@ We follow a simple rule: **don't be a jerk**.
 
 ### Reporting Bugs
 
-- **Ensure the bug was not already reported** by searching the [Issues](https://github.com/sudoxv9k/cod4x_anticheat/issues).
-- If you cannot find an existing issue, [open a new one](https://github.com/sudoxv9k/cod4x_anticheat/issues/new). Include:
+- **Ensure the bug was not already reported** by searching the [Issues](https://github.com/gerykurucz/cod4x_anticheat/issues).
+- If you cannot find an existing issue, [open a new one](https://github.com/gerykurucz/cod4x_anticheat/issues/new). Include:
   - A clear title and description.
   - Steps to reproduce.
   - Expected vs. actual behavior.
@@ -45,7 +45,7 @@ Open an issue with the label `enhancement`. Describe the feature, its use case, 
 
 ### Building
 
-Follow [README.md](https://github.com/sudoxv9k/cod4x_anticheat/blob/main/README.md) building section depending on your linux distrobution.
+Follow [README.md](https://github.com/gerykurucz/cod4x_anticheat/blob/main/README.md) building section depending on your linux distrobution.
 
 ## Testing
 
@@ -59,7 +59,7 @@ Follow [README.md](https://github.com/sudoxv9k/cod4x_anticheat/blob/main/README.
 
 ## Documentation
 
-If your change adds a new cvar, command, or file format, please update the [README.md](https://github.com/sudoxv9k/cod4x_anticheat/blob/main/README.md) accordingly.
+If your change adds a new cvar, command, or file format, please update the [README.md](https://github.com/gerykurucz/cod4x_anticheat/blob/main/README.md) accordingly.
 
 ## Questions?
 
@@ -69,6 +69,6 @@ Feel free to open an issue with the `question` label or contact the maintainer d
 ## Security
 Do not post secrets, API keys, private logs, personal documents, or public IPs in issues or pull requests.
 
-For security reports, follow [SECURITY.md](https://github.com/sudoxv9k/cod4x_anticheat/blob/main/SECURITY.md).
+For security reports, follow [SECURITY.md](https://github.com/gerykurucz/cod4x_anticheat/blob/main/SECURITY.md).
 
 ## Thank you for helping make Nektum Shield better!
